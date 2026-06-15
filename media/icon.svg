@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Playwright Trace Opener icon">
+  <defs>
+    <linearGradient id="bg" x1="42" y1="28" x2="216" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#19a974"/>
+      <stop offset="0.52" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="zip" x1="72" y1="50" x2="178" y2="202" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <path d="M54 190C54 139 92 104 132 104h6" fill="none" stroke="#a7f3d0" stroke-width="14" stroke-linecap="round"/>
+  <path d="M43 178l12 25 23-15" fill="none" stroke="#a7f3d0" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <g filter="url(#shadow)">
+    <path d="M85 38h65l42 42v126c0 9.9-8.1 18-18 18H85c-9.9 0-18-8.1-18-18V56c0-9.9 8.1-18 18-18z" fill="url(#zip)"/>
+    <path d="M150 38v34c0 4.4 3.6 8 8 8h34" fill="#bfdbfe"/>
+    <path d="M111 40h22v20h-22zM133 60h-22v20h22zM111 80h22v20h-22zM133 100h-22v20h22z" fill="#0f766e"/>
+    <rect x="99" y="126" width="46" height="34" rx="9" fill="#0f172a"/>
+    <rect x="108" y="136" width="28" height="14" rx="4" fill="#60a5fa"/>
+    <path d="M105 184h48" stroke="#0f766e" stroke-width="10" stroke-linecap="round"/>
+  </g>
+  <circle cx="184" cy="176" r="38" fill="#0f172a"/>
+  <path d="M176 158l26 18-26 18z" fill="#34d399"/>
+</svg>
