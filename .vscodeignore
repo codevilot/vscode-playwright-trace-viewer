@@ -2,6 +2,7 @@
 .gitignore
 src/**
 example/**
+playwright-example/**
 test-results/**
 *.vsix
 tsconfig.json

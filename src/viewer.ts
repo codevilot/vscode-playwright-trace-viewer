@@ -75,7 +75,7 @@ class TraceZipEditorProvider implements vscode.CustomReadonlyEditorProvider<Trac
 
     try {
       const server = await startBundledTraceViewerServer(tracePath, workspaceRoot);
-      const viewerUrl = buildTraceViewerUrl(server, tracePath);
+      const viewerUrl = await buildTraceViewerUrl(server, tracePath);
       webviewPanel.webview.html = renderTraceViewer(webviewPanel.webview, viewerUrl);
 
       webviewPanel.onDidDispose(() => {
@@ -109,7 +109,7 @@ function getPlaywrightCoreBundle(): PlaywrightCoreBundle {
   return require(coreBundlePath) as PlaywrightCoreBundle;
 }
 
-function buildTraceViewerUrl(server: TraceViewerServer, tracePath: string): string {
+async function buildTraceViewerUrl(server: TraceViewerServer, tracePath: string): Promise<string> {
   const traceUrl = `file?path=${encodeURIComponent(tracePath)}`;
   const params = new URLSearchParams();
 
@@ -118,7 +118,8 @@ function buildTraceViewerUrl(server: TraceViewerServer, tracePath: string): stri
   }
 
   params.append('trace', traceUrl);
-  return `${server.urlPrefix('human-readable')}/trace/index.html?${params.toString()}`;
+  const localViewerUri = vscode.Uri.parse(`${server.urlPrefix('human-readable')}/trace/index.html?${params.toString()}`);
+  return (await vscode.env.asExternalUri(localViewerUri)).toString();
 }
 
 function renderTraceViewer(webview: vscode.Webview, viewerUrl: string): string {
