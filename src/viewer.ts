@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot, validateTraceUri } from './trace';
 
@@ -7,17 +8,26 @@ const viewType = 'playwrightTraceViewer.traceZipEditor';
 type TraceViewerServer = {
   stop(): Promise<void>;
   urlPrefix(purpose: 'human-readable' | 'precise'): string;
+  _routes?: TraceViewerRoute[];
   routePath(
     path: string,
     handler: (
       request: unknown,
-      response: {
-        statusCode: number;
-        setHeader(name: string, value: string): void;
-        end(): void;
-      }
+      response: TraceViewerResponse
     ) => boolean
   ): void;
+};
+
+type TraceViewerRoute = {
+  exact?: string;
+  prefix?: string;
+  handler: (request: unknown, response: TraceViewerResponse) => boolean;
+};
+
+type TraceViewerResponse = {
+  statusCode: number;
+  setHeader(name: string, value: number | string): void;
+  end(data?: string | Buffer): void;
 };
 
 type PlaywrightCoreBundle = {
@@ -86,6 +96,7 @@ class TraceZipEditorProvider implements vscode.CustomReadonlyEditorProvider<Trac
 
     try {
       const server = await startBundledTraceViewerServer(tracePath, workspaceRoot);
+      configureTraceViewerKeyboardShortcuts(server);
       configureRootRedirect(server, tracePath);
       const viewerUrl = await buildTraceViewerUrl(server);
       webviewPanel.webview.html = renderTraceViewer(webviewPanel.webview, viewerUrl);
@@ -135,6 +146,116 @@ function configureRootRedirect(server: TraceViewerServer, tracePath: string): vo
     response.end();
     return true;
   });
+}
+
+function configureTraceViewerKeyboardShortcuts(server: TraceViewerServer): void {
+  const handler = (_request: unknown, response: TraceViewerResponse): boolean => {
+    const html = renderTraceViewerIndexWithKeyboardShortcuts();
+    response.statusCode = 200;
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.setHeader('Content-Length', Buffer.byteLength(html));
+    response.end(html);
+    return true;
+  };
+
+  const route = {
+    exact: '/trace/index.html',
+    handler
+  };
+
+  if (server._routes) {
+    server._routes.unshift(route);
+  } else {
+    server.routePath('/trace/index.html', handler);
+  }
+}
+
+function renderTraceViewerIndexWithKeyboardShortcuts(): string {
+  const indexHtmlPath = path.join(
+    path.dirname(require.resolve('playwright-core/package.json')),
+    'lib',
+    'vite',
+    'traceViewer',
+    'index.html'
+  );
+  const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
+  const shortcutScript = `<script>
+(() => {
+  let hasStartedPlayback = false;
+  let replayingClick = false;
+
+  const findToolbarButton = title =>
+    document.querySelector('button[title="' + title + '"]');
+
+  const isEditableTarget = target => {
+    if (!(target instanceof Element))
+      return false;
+    const editable = target.closest('input, textarea, select, [contenteditable="true"]');
+    return !!editable;
+  };
+
+  const playFromStartIfNeeded = playButton => {
+    if (hasStartedPlayback)
+      return false;
+    const stopButton = findToolbarButton('Stop');
+    if (!stopButton || stopButton.disabled)
+      return false;
+    hasStartedPlayback = true;
+    stopButton.click();
+    requestAnimationFrame(() => {
+      replayingClick = true;
+      playButton.click();
+      replayingClick = false;
+    });
+    return true;
+  };
+
+  const togglePlayback = () => {
+    const pauseButton = findToolbarButton('Pause');
+    if (pauseButton) {
+      pauseButton.click();
+      return;
+    }
+    const playButton = findToolbarButton('Play');
+    if (!playButton || playButton.disabled)
+      return;
+    if (!playFromStartIfNeeded(playButton)) {
+      hasStartedPlayback = true;
+      playButton.click();
+    }
+  };
+
+  document.addEventListener('keydown', event => {
+    if (event.code !== 'Space' || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isEditableTarget(event.target))
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    togglePlayback();
+  }, true);
+
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent || event.data?.type !== 'playwrightTraceViewer.togglePlayback')
+      return;
+    togglePlayback();
+  });
+
+  document.addEventListener('click', event => {
+    if (replayingClick)
+      return;
+    const playButton = event.target instanceof Element ? event.target.closest('button[title="Play"]') : null;
+    if (!playButton)
+      return;
+    if (playFromStartIfNeeded(playButton)) {
+      event.preventDefault();
+      event.stopPropagation();
+    } else {
+      hasStartedPlayback = true;
+    }
+  }, true);
+})();
+</script>`;
+
+  return indexHtml.replace('</body>', `${shortcutScript}\n  </body>`);
 }
 
 function buildTraceViewerRedirectPath(tracePath: string): string {
@@ -219,6 +340,7 @@ function renderTraceViewer(webview: vscode.Webview, viewerUrl: string): string {
       if (event.code === 'Space' && document.activeElement !== frame) {
         event.preventDefault();
         focusViewer();
+        frame.contentWindow?.postMessage({ type: 'playwrightTraceViewer.togglePlayback' }, '${escapeJavaScript(origin)}');
       }
     }, true);
   </script>
@@ -279,4 +401,8 @@ function escapeHtml(value: string): string {
         return char;
     }
   });
+}
+
+function escapeJavaScript(value: string): string {
+  return value.replace(/[\\']/g, (char) => `\\${char}`);
 }
