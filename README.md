@@ -1,4 +1,4 @@
-# Playwright Trace Opener
+# Playwright Trace Viewer
 
 A lightweight VS Code extension for opening Playwright trace.zip files quickly.
 
@@ -23,19 +23,19 @@ npx playwright test --trace on
 
 ## Commands
 
-- Playwright Trace Opener: Open Latest Trace
+- Playwright Trace Viewer: Open Latest Trace
 - Open Playwright Trace
-- Playwright Trace Opener: Open Report
-- Playwright Trace Opener: Run Tests with Trace
-- Playwright Trace Opener: Run Tests Retain Trace on Failure
+- Playwright Trace Viewer: Open Report
+- Playwright Trace Viewer: Run Tests with Trace
+- Playwright Trace Viewer: Run Tests Retain Trace on Failure
 
 ## Settings
 
-`playwrightTraceOpener.traceGlob`
+`playwrightTraceViewer.traceGlob`
 
 Default: `test-results/**/trace.zip`
 
-`playwrightTraceOpener.packageRunner`
+`playwrightTraceViewer.packageRunner`
 
 Default: `npx`
 
@@ -50,6 +50,6 @@ Allowed examples: `npx`, `pnpm`, `yarn`
 5. Open a Playwright project in the Extension Development Host.
 6. Run one of the contributed commands from the Command Palette.
 
-For a typical Playwright workflow, run `Playwright Trace Opener: Run Tests Retain Trace on Failure`, then use `Playwright Trace Opener: Open Latest Trace` after a failing test generates `test-results/**/trace.zip`.
+For a typical Playwright workflow, run `Playwright Trace Viewer: Run Tests Retain Trace on Failure`, then use `Playwright Trace Viewer: Open Latest Trace` after a failing test generates `test-results/**/trace.zip`.
 
-Double-clicking `trace.zip` in Explorer opens it through this extension and launches the Playwright trace viewer. You can also right-click `trace.zip` in Explorer and choose `Open Playwright Trace`, or run `Playwright Trace Opener: Open Latest Trace`.
+Double-clicking `trace.zip` in Explorer opens it through this extension and launches the Playwright trace viewer. You can also right-click `trace.zip` in Explorer and choose `Open Playwright Trace`, or run `Playwright Trace Viewer: Open Latest Trace`.

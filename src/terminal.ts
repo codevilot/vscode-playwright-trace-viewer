@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-const terminalName = 'Playwright Trace Opener';
+const terminalName = 'Playwright Trace Viewer';
 
 export function runTestsWithTrace(workspaceRoot: string, traceMode: 'on' | 'retain-on-failure'): void {
   const runner = resolveTerminalRunner();
@@ -27,7 +27,7 @@ function quoteShellArg(value: string): string {
 
 function resolveTerminalRunner(): string {
   const packageRunner = vscode.workspace
-    .getConfiguration('playwrightTraceOpener')
+    .getConfiguration('playwrightTraceViewer')
     .get<string>('packageRunner', 'npx')
     .trim() || 'npx';
 

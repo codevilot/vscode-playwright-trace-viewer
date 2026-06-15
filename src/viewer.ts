@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot, validateTraceUri } from './trace';
 
-const viewType = 'playwrightTraceOpener.traceZipEditor';
+const viewType = 'playwrightTraceViewer.traceZipEditor';
 
 type TraceViewerServer = {
   stop(): Promise<void>;

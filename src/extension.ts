@@ -8,33 +8,33 @@ export function activate(context: vscode.ExtensionContext): void {
   registerTraceViewer(context);
 
   const openLatestTraceCommand = vscode.commands.registerCommand(
-    'playwrightTraceOpener.openLatestTrace',
+    'playwrightTraceViewer.openLatestTrace',
     openLatestTrace
   );
 
   const openSelectedTraceCommand = vscode.commands.registerCommand(
-    'playwrightTraceOpener.openSelectedTrace',
+    'playwrightTraceViewer.openSelectedTrace',
     (uri?: vscode.Uri) => openSelectedTrace(uri)
   );
 
   const openReportCommand = vscode.commands.registerCommand(
-    'playwrightTraceOpener.openReport',
+    'playwrightTraceViewer.openReport',
     openReport
   );
 
   const runTestsWithTraceCommand = vscode.commands.registerCommand(
-    'playwrightTraceOpener.runTestsWithTrace',
+    'playwrightTraceViewer.runTestsWithTrace',
     () => runTests('on')
   );
 
   const runTestsRetainTraceCommand = vscode.commands.registerCommand(
-    'playwrightTraceOpener.runTestsRetainTrace',
+    'playwrightTraceViewer.runTestsRetainTrace',
     () => runTests('retain-on-failure')
   );
 
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.text = 'Open PW Trace';
-  statusBarItem.command = 'playwrightTraceOpener.openLatestTrace';
+  statusBarItem.command = 'playwrightTraceViewer.openLatestTrace';
   statusBarItem.tooltip = 'Open the latest Playwright trace.zip';
   statusBarItem.show();
 
@@ -64,7 +64,7 @@ async function openLatestTrace(): Promise<void> {
 
   if (!tracePath) {
     vscode.window.showInformationMessage(
-      'No Playwright trace.zip files found. Run tests with trace enabled or update playwrightTraceOpener.traceGlob.'
+      'No Playwright trace.zip files found. Run tests with trace enabled or update playwrightTraceViewer.traceGlob.'
     );
     return;
   }

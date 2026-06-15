@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 
 export function getPackageRunner(): string {
   const packageRunner = vscode.workspace
-    .getConfiguration('playwrightTraceOpener')
+    .getConfiguration('playwrightTraceViewer')
     .get<string>('packageRunner', 'npx')
     .trim() || 'npx';
 

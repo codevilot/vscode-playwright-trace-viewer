@@ -1,6 +1,6 @@
 {
-  "name": "playwright-trace-opener",
-  "displayName": "Playwright Trace Opener",
+  "name": "playwright-trace-viewer",
+  "displayName": "Playwright Trace Viewer",
   "description": "A lightweight helper for opening Playwright trace.zip files from VS Code.",
   "version": "0.0.1",
   "publisher": "codevilot",
@@ -8,12 +8,12 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/codevilot/vscode-playwright-trace-opener.git"
+    "url": "https://github.com/codevilot/vscode-playwright-trace-viewer.git"
   },
   "bugs": {
-    "url": "https://github.com/codevilot/vscode-playwright-trace-opener/issues"
+    "url": "https://github.com/codevilot/vscode-playwright-trace-viewer/issues"
   },
-  "homepage": "https://github.com/codevilot/vscode-playwright-trace-opener#readme",
+  "homepage": "https://github.com/codevilot/vscode-playwright-trace-viewer#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -23,12 +23,12 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCustomEditor:playwrightTraceOpener.traceZipEditor",
-    "onCommand:playwrightTraceOpener.openLatestTrace",
-    "onCommand:playwrightTraceOpener.openSelectedTrace",
-    "onCommand:playwrightTraceOpener.openReport",
-    "onCommand:playwrightTraceOpener.runTestsWithTrace",
-    "onCommand:playwrightTraceOpener.runTestsRetainTrace"
+    "onCustomEditor:playwrightTraceViewer.traceZipEditor",
+    "onCommand:playwrightTraceViewer.openLatestTrace",
+    "onCommand:playwrightTraceViewer.openSelectedTrace",
+    "onCommand:playwrightTraceViewer.openReport",
+    "onCommand:playwrightTraceViewer.runTestsWithTrace",
+    "onCommand:playwrightTraceViewer.runTestsRetainTrace"
   ],
   "main": "./dist/extension.js",
   "scripts": {
@@ -46,35 +46,35 @@
   "contributes": {
     "commands": [
       {
-        "command": "playwrightTraceOpener.openLatestTrace",
-        "title": "Playwright Trace Opener: Open Latest Trace"
+        "command": "playwrightTraceViewer.openLatestTrace",
+        "title": "Playwright Trace Viewer: Open Latest Trace"
       },
       {
-        "command": "playwrightTraceOpener.openSelectedTrace",
+        "command": "playwrightTraceViewer.openSelectedTrace",
         "title": "Open Playwright Trace"
       },
       {
-        "command": "playwrightTraceOpener.openReport",
-        "title": "Playwright Trace Opener: Open Report"
+        "command": "playwrightTraceViewer.openReport",
+        "title": "Playwright Trace Viewer: Open Report"
       },
       {
-        "command": "playwrightTraceOpener.runTestsWithTrace",
-        "title": "Playwright Trace Opener: Run Tests with Trace"
+        "command": "playwrightTraceViewer.runTestsWithTrace",
+        "title": "Playwright Trace Viewer: Run Tests with Trace"
       },
       {
-        "command": "playwrightTraceOpener.runTestsRetainTrace",
-        "title": "Playwright Trace Opener: Run Tests Retain Trace on Failure"
+        "command": "playwrightTraceViewer.runTestsRetainTrace",
+        "title": "Playwright Trace Viewer: Run Tests Retain Trace on Failure"
       }
     ],
     "configuration": {
-      "title": "Playwright Trace Opener",
+      "title": "Playwright Trace Viewer",
       "properties": {
-        "playwrightTraceOpener.traceGlob": {
+        "playwrightTraceViewer.traceGlob": {
           "type": "string",
           "default": "test-results/**/trace.zip",
           "description": "Glob used to find Playwright trace.zip files in the current workspace."
         },
-        "playwrightTraceOpener.packageRunner": {
+        "playwrightTraceViewer.packageRunner": {
           "type": "string",
           "default": "npx",
           "description": "Package runner used to invoke Playwright. Common values: npx, pnpm, yarn."
@@ -83,7 +83,7 @@
     },
     "customEditors": [
       {
-        "viewType": "playwrightTraceOpener.traceZipEditor",
+        "viewType": "playwrightTraceViewer.traceZipEditor",
         "displayName": "Playwright Trace",
         "selector": [
           {
@@ -96,14 +96,14 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "playwrightTraceOpener.openSelectedTrace",
+          "command": "playwrightTraceViewer.openSelectedTrace",
           "when": "resourceFilename == trace.zip",
           "group": "navigation@1"
         }
       ],
       "editor/title/context": [
         {
-          "command": "playwrightTraceOpener.openSelectedTrace",
+          "command": "playwrightTraceViewer.openSelectedTrace",
           "when": "resourceFilename == trace.zip",
           "group": "navigation@1"
         }

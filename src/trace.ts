@@ -8,7 +8,7 @@ export function getWorkspaceRoot(): string | undefined {
 
 export function getTraceGlob(): string {
   return vscode.workspace
-    .getConfiguration('playwrightTraceOpener')
+    .getConfiguration('playwrightTraceViewer')
     .get<string>('traceGlob', 'test-results/**/trace.zip');
 }
 
