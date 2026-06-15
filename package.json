@@ -1,0 +1,115 @@
+{
+  "name": "playwright-trace-opener",
+  "displayName": "Playwright Trace Opener",
+  "description": "A lightweight helper for opening Playwright trace.zip files from VS Code.",
+  "version": "0.0.1",
+  "publisher": "codevilot",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codevilot/vscode-playwright-trace-opener.git"
+  },
+  "bugs": {
+    "url": "https://github.com/codevilot/vscode-playwright-trace-opener/issues"
+  },
+  "homepage": "https://github.com/codevilot/vscode-playwright-trace-opener#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCustomEditor:playwrightTraceOpener.traceZipEditor",
+    "onCommand:playwrightTraceOpener.openLatestTrace",
+    "onCommand:playwrightTraceOpener.openSelectedTrace",
+    "onCommand:playwrightTraceOpener.openReport",
+    "onCommand:playwrightTraceOpener.runTestsWithTrace",
+    "onCommand:playwrightTraceOpener.runTestsRetainTrace"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.3.3"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "playwrightTraceOpener.openLatestTrace",
+        "title": "Playwright Trace Opener: Open Latest Trace"
+      },
+      {
+        "command": "playwrightTraceOpener.openSelectedTrace",
+        "title": "Open Playwright Trace"
+      },
+      {
+        "command": "playwrightTraceOpener.openReport",
+        "title": "Playwright Trace Opener: Open Report"
+      },
+      {
+        "command": "playwrightTraceOpener.runTestsWithTrace",
+        "title": "Playwright Trace Opener: Run Tests with Trace"
+      },
+      {
+        "command": "playwrightTraceOpener.runTestsRetainTrace",
+        "title": "Playwright Trace Opener: Run Tests Retain Trace on Failure"
+      }
+    ],
+    "configuration": {
+      "title": "Playwright Trace Opener",
+      "properties": {
+        "playwrightTraceOpener.traceGlob": {
+          "type": "string",
+          "default": "test-results/**/trace.zip",
+          "description": "Glob used to find Playwright trace.zip files in the current workspace."
+        },
+        "playwrightTraceOpener.packageRunner": {
+          "type": "string",
+          "default": "npx",
+          "description": "Package runner used to invoke Playwright. Common values: npx, pnpm, yarn."
+        }
+      }
+    },
+    "customEditors": [
+      {
+        "viewType": "playwrightTraceOpener.traceZipEditor",
+        "displayName": "Playwright Trace",
+        "selector": [
+          {
+            "filenamePattern": "**/trace.zip"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "playwrightTraceOpener.openSelectedTrace",
+          "when": "resourceFilename == trace.zip",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "playwrightTraceOpener.openSelectedTrace",
+          "when": "resourceFilename == trace.zip",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "playwright-core": "^1.60.0"
+  }
+}
