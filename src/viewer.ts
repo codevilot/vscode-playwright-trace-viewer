@@ -7,6 +7,17 @@ const viewType = 'playwrightTraceViewer.traceZipEditor';
 type TraceViewerServer = {
   stop(): Promise<void>;
   urlPrefix(purpose: 'human-readable' | 'precise'): string;
+  routePath(
+    path: string,
+    handler: (
+      request: unknown,
+      response: {
+        statusCode: number;
+        setHeader(name: string, value: string): void;
+        end(): void;
+      }
+    ) => boolean
+  ): void;
 };
 
 type PlaywrightCoreBundle = {
@@ -75,7 +86,8 @@ class TraceZipEditorProvider implements vscode.CustomReadonlyEditorProvider<Trac
 
     try {
       const server = await startBundledTraceViewerServer(tracePath, workspaceRoot);
-      const viewerUrl = await buildTraceViewerUrl(server, tracePath);
+      configureRootRedirect(server, tracePath);
+      const viewerUrl = await buildTraceViewerUrl(server);
       webviewPanel.webview.html = renderTraceViewer(webviewPanel.webview, viewerUrl);
 
       webviewPanel.onDidDispose(() => {
@@ -109,7 +121,23 @@ function getPlaywrightCoreBundle(): PlaywrightCoreBundle {
   return require(coreBundlePath) as PlaywrightCoreBundle;
 }
 
-async function buildTraceViewerUrl(server: TraceViewerServer, tracePath: string): Promise<string> {
+async function buildTraceViewerUrl(server: TraceViewerServer): Promise<string> {
+  const localViewerUri = vscode.Uri.parse(`${server.urlPrefix('human-readable')}/`);
+  return (await vscode.env.asExternalUri(localViewerUri)).toString();
+}
+
+function configureRootRedirect(server: TraceViewerServer, tracePath: string): void {
+  const redirectPath = buildTraceViewerRedirectPath(tracePath);
+
+  server.routePath('/', (_request, response) => {
+    response.statusCode = 302;
+    response.setHeader('Location', redirectPath);
+    response.end();
+    return true;
+  });
+}
+
+function buildTraceViewerRedirectPath(tracePath: string): string {
   const traceUrl = `file?path=${encodeURIComponent(tracePath)}`;
   const params = new URLSearchParams();
 
@@ -118,8 +146,7 @@ async function buildTraceViewerUrl(server: TraceViewerServer, tracePath: string)
   }
 
   params.append('trace', traceUrl);
-  const localViewerUri = vscode.Uri.parse(`${server.urlPrefix('human-readable')}/trace/index.html?${params.toString()}`);
-  return (await vscode.env.asExternalUri(localViewerUri)).toString();
+  return `./trace/index.html?${params.toString()}`;
 }
 
 function renderTraceViewer(webview: vscode.Webview, viewerUrl: string): string {
