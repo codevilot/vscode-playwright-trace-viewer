@@ -2,7 +2,7 @@
   "name": "playwright-trace-viewer",
   "displayName": "Playwright Trace Viewer",
   "description": "A lightweight helper for opening Playwright trace.zip files from VS Code.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "codevilot",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -143,7 +143,7 @@
       "properties": {
         "playwrightTraceViewer.traceGlob": {
           "type": "string",
-          "default": "test-results/**/*trace.zip",
+          "default": "**/test-results/**/*trace.zip",
           "description": "Glob used to find Playwright trace.zip files in the current workspace."
         },
         "playwrightTraceViewer.testGlob": {
@@ -161,7 +161,7 @@
         },
         "playwrightTraceViewer.testResultGlob": {
           "type": "string",
-          "default": "test-results/**/*",
+          "default": "**/test-results/**/*",
           "description": "Glob used to show Playwright test result files in the Tests sidebar."
         },
         "playwrightTraceViewer.packageRunner": {

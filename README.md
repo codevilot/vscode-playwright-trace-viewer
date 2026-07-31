@@ -33,7 +33,7 @@ npx playwright test --trace on
 
 `playwrightTraceViewer.traceGlob`
 
-Default: `test-results/**/*trace.zip`
+Default: `**/test-results/**/*trace.zip`
 
 `playwrightTraceViewer.packageRunner`
 

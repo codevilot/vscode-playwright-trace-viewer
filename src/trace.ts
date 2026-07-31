@@ -9,7 +9,7 @@ export function getWorkspaceRoot(): string | undefined {
 export function getTraceGlob(): string {
   return vscode.workspace
     .getConfiguration('playwrightTraceViewer')
-    .get<string>('traceGlob', 'test-results/**/*trace.zip');
+    .get<string>('traceGlob', '**/test-results/**/*trace.zip');
 }
 
 export async function findLatestTrace(): Promise<string | undefined> {
