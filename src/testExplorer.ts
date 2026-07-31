@@ -538,13 +538,13 @@ async function runTests(node?: TestNode): Promise<void> {
 
   if (node?.type === 'file') {
     const group = await getTestRunGroup(workspaceRoot, node);
-    runTestFramework(group.cwd, group.framework, group.testPaths);
+    await runTestFramework(group.cwd, group.framework, group.testPaths);
     return;
   }
 
   if (node?.type === 'folder') {
     const groups = await groupTestFilesByProject(workspaceRoot, node.files);
-    runGroupedTests(groups);
+    await runGroupedTests(groups);
     return;
   }
 
@@ -557,7 +557,7 @@ async function runTests(node?: TestNode): Promise<void> {
     return;
   }
 
-  runGroupedTests(groups);
+  await runGroupedTests(groups);
 }
 
 function getTerminalRunner(): string {
@@ -627,17 +627,29 @@ async function findNearestPackageRoot(startDir: string, workspaceRoot: string): 
   return workspaceRoot;
 }
 
-function runGroupedTests(groups: TestRunGroup[]): void {
+async function runGroupedTests(groups: TestRunGroup[]): Promise<void> {
   for (const group of groups) {
-    runTestFramework(group.cwd, group.framework, group.testPaths);
+    await runTestFramework(group.cwd, group.framework, group.testPaths);
   }
 }
 
-function runTestFramework(cwd: string, framework: TestFramework, testPaths: string[] = []): void {
+async function runTestFramework(cwd: string, framework: TestFramework, testPaths: string[] = []): Promise<void> {
   const runner = getTerminalRunner();
+  const localBin = await findLocalFrameworkBin(cwd, framework);
   const args = framework === 'vitest'
-    ? [runner, 'vitest', 'run', ...testPaths]
-    : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on'];
+    ? localBin
+      ? [localBin, 'run', ...testPaths]
+      : [runner, 'vitest', 'run', ...testPaths]
+    : localBin
+      ? [localBin, 'test', ...testPaths, '--trace', 'on']
+      : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on'];
 
   runInTerminal(cwd, args);
+}
+
+async function findLocalFrameworkBin(cwd: string, framework: TestFramework): Promise<string | undefined> {
+  const executable = process.platform === 'win32' ? `${framework}.cmd` : framework;
+  const candidate = path.join(cwd, 'node_modules', '.bin', executable);
+
+  return await pathExists(candidate) ? candidate : undefined;
 }
