@@ -4,7 +4,15 @@ const terminalName = 'Playwright Trace Viewer';
 
 export function runTestsWithTrace(workspaceRoot: string, traceMode: 'on' | 'retain-on-failure'): void {
   const runner = resolveTerminalRunner();
-  runInTerminal(workspaceRoot, [runner, 'playwright', 'test', '--trace', traceMode]);
+  runInTerminal(workspaceRoot, [
+    runner,
+    'playwright',
+    'test',
+    '--trace',
+    traceMode,
+    '--output',
+    'test-results/playwright-trace-viewer/all'
+  ]);
 }
 
 export function runInTerminal(cwd: string, args: string[]): void {

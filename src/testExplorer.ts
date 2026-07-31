@@ -32,6 +32,7 @@ type ResultFileNode = {
   label: string;
   relativePath: string;
   resultDirRelativePath: string;
+  sourceFileSlugs: string[];
   uri: vscode.Uri;
   mtimeMs: number;
 };
@@ -302,11 +303,13 @@ async function discoverResults(): Promise<ResultFileNode[]> {
 
         const relativePath = path.relative(workspaceRoot, uri.fsPath);
         const resultDirRelativePath = getResultDirRelativePath(relativePath);
+        const resultDirPath = path.join(workspaceRoot, resultDirRelativePath);
         return {
           type: 'resultFile' as const,
           label: path.basename(relativePath),
           relativePath,
           resultDirRelativePath,
+          sourceFileSlugs: await getResultSourceFileSlugs(resultDirPath),
           uri,
           mtimeMs: stat.mtimeMs
         };
@@ -322,8 +325,13 @@ async function discoverResults(): Promise<ResultFileNode[]> {
 
 function matchResultsToTestFile(relativePath: string, resultFiles: ResultFileNode[]): ResultFileNode[] {
   const candidates = getTestResultSlugCandidates(relativePath);
+  const sourceSlug = getSourceFileSlugCandidate(relativePath);
 
   return resultFiles.filter((file) => {
+    if (file.sourceFileSlugs.some((slug) => slug === sourceSlug || slug.startsWith(`${sourceSlug}-`))) {
+      return true;
+    }
+
     const resultSlug = slugify(path.basename(file.resultDirRelativePath));
 
     return candidates.some((candidate) => resultSlug === candidate || resultSlug.startsWith(`${candidate}-`));
@@ -347,14 +355,41 @@ function getTestResultSlugCandidates(relativePath: string): string[] {
   return [...new Set(candidates.filter(Boolean))];
 }
 
-function getResultDirRelativePath(relativePath: string): string {
-  const parts = relativePath.replace(/\\/g, '/').split('/');
+function getSourceFileSlugCandidate(relativePath: string): string {
+  const fileName = path.basename(relativePath)
+    .replace(/\.(spec|test)\.[^.]+$/i, '')
+    .replace(/\.[^.]+$/i, '');
 
-  if (parts.length >= 2 && parts[0] === 'test-results' && !parts[1].startsWith('.')) {
-    return parts.slice(0, 2).join('/');
+  return slugify(fileName);
+}
+
+function getResultDirRelativePath(relativePath: string): string {
+  const normalizedPath = relativePath.replace(/\\/g, '/');
+  const parts = normalizedPath.split('/');
+  const attachmentsIndex = parts.indexOf('attachments');
+
+  if (attachmentsIndex > 1) {
+    return parts.slice(0, attachmentsIndex).join('/');
+  }
+
+  if (parts[0] === 'test-results') {
+    return path.dirname(normalizedPath);
   }
 
   return path.dirname(relativePath);
+}
+
+async function getResultSourceFileSlugs(resultDirPath: string): Promise<string[]> {
+  const attachmentsDir = path.join(resultDirPath, 'attachments');
+
+  try {
+    const entries = await fs.readdir(attachmentsDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith('source-'))
+      .map((entry) => slugify(entry.name.replace(/^source-/, '').replace(/-[a-f0-9]{40}\.[^.]+$/i, '')));
+  } catch {
+    return [];
+  }
 }
 
 function isVisibleResultFile(filePath: string): boolean {
@@ -636,15 +671,24 @@ async function runGroupedTests(groups: TestRunGroup[]): Promise<void> {
 async function runTestFramework(cwd: string, framework: TestFramework, testPaths: string[] = []): Promise<void> {
   const runner = getTerminalRunner();
   const localBin = await findLocalFrameworkBin(cwd, framework);
+  const outputArgs = framework === 'playwright'
+    ? ['--output', getPlaywrightOutputDir(testPaths)]
+    : [];
   const args = framework === 'vitest'
     ? localBin
       ? [localBin, 'run', ...testPaths]
       : [runner, 'vitest', 'run', ...testPaths]
     : localBin
-      ? [localBin, 'test', ...testPaths, '--trace', 'on']
-      : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on'];
+      ? [localBin, 'test', ...testPaths, '--trace', 'on', ...outputArgs]
+      : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on', ...outputArgs];
 
   runInTerminal(cwd, args);
+}
+
+function getPlaywrightOutputDir(testPaths: string[]): string {
+  const slug = slugify(testPaths.length > 0 ? testPaths.join('-') : 'all') || 'all';
+
+  return path.join('test-results', 'playwright-trace-viewer', slug);
 }
 
 async function findLocalFrameworkBin(cwd: string, framework: TestFramework): Promise<string | undefined> {
