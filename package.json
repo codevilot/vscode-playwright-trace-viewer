@@ -28,7 +28,14 @@
     "onCommand:playwrightTraceViewer.openSelectedTrace",
     "onCommand:playwrightTraceViewer.openReport",
     "onCommand:playwrightTraceViewer.runTestsWithTrace",
-    "onCommand:playwrightTraceViewer.runTestsRetainTrace"
+    "onCommand:playwrightTraceViewer.runTestsRetainTrace",
+    "onCommand:playwrightTraceViewer.refreshTests",
+    "onCommand:playwrightTraceViewer.searchTests",
+    "onCommand:playwrightTraceViewer.installDependencies",
+    "onCommand:playwrightTraceViewer.runAllTestsFromExplorer",
+    "onCommand:playwrightTraceViewer.runTestNode",
+    "onCommand:playwrightTraceViewer.openTestFile",
+    "onView:playwrightTraceViewer.tests"
   ],
   "main": "./dist/extension.js",
   "scripts": {
@@ -64,6 +71,59 @@
       {
         "command": "playwrightTraceViewer.runTestsRetainTrace",
         "title": "Playwright Trace Viewer: Run Tests Retain Trace on Failure"
+      },
+      {
+        "command": "playwrightTraceViewer.refreshTests",
+        "title": "Playwright Trace Viewer: Refresh Tests",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "playwrightTraceViewer.searchTests",
+        "title": "Playwright Trace Viewer: Search Test Files",
+        "icon": "$(search)"
+      },
+      {
+        "command": "playwrightTraceViewer.installDependencies",
+        "title": "Playwright Trace Viewer: Install Dependencies",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "playwrightTraceViewer.runAllTestsFromExplorer",
+        "title": "Playwright Trace Viewer: Run All Tests",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "playwrightTraceViewer.runTestNode",
+        "title": "Playwright Trace Viewer: Run Test",
+        "icon": "$(play)"
+      },
+      {
+        "command": "playwrightTraceViewer.openTestFile",
+        "title": "Playwright Trace Viewer: Open Test File",
+        "icon": "$(go-to-file)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "playwrightTraceViewer",
+          "title": "Playwright",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "playwrightTraceViewer": [
+        {
+          "id": "playwrightTraceViewer.tests",
+          "name": "Tests"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "playwrightTraceViewer.tests",
+        "contents": "No Playwright test files were found in the current workspace.\\n[Search](command:playwrightTraceViewer.searchTests)\\n[Install Dependencies](command:playwrightTraceViewer.installDependencies)\\n[Refresh](command:playwrightTraceViewer.refreshTests)"
       }
     ],
     "configuration": {
@@ -73,6 +133,19 @@
           "type": "string",
           "default": "test-results/**/trace.zip",
           "description": "Glob used to find Playwright trace.zip files in the current workspace."
+        },
+        "playwrightTraceViewer.testGlob": {
+          "type": "string",
+          "default": "**/*.{spec,test}.{ts,tsx,js,jsx,mjs,cjs}",
+          "description": "Glob used to find candidate Playwright test files in the current workspace."
+        },
+        "playwrightTraceViewer.testExcludeGlobs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional glob patterns excluded from Playwright test discovery. VS Code search.exclude and files.exclude are also respected."
         },
         "playwrightTraceViewer.packageRunner": {
           "type": "string",
@@ -106,6 +179,45 @@
           "command": "playwrightTraceViewer.openSelectedTrace",
           "when": "resourceFilename == trace.zip",
           "group": "navigation@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "playwrightTraceViewer.searchTests",
+          "when": "view == playwrightTraceViewer.tests",
+          "group": "navigation@0"
+        },
+        {
+          "command": "playwrightTraceViewer.installDependencies",
+          "when": "view == playwrightTraceViewer.tests",
+          "group": "navigation@1"
+        },
+        {
+          "command": "playwrightTraceViewer.runAllTestsFromExplorer",
+          "when": "view == playwrightTraceViewer.tests",
+          "group": "navigation@2"
+        },
+        {
+          "command": "playwrightTraceViewer.refreshTests",
+          "when": "view == playwrightTraceViewer.tests",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "playwrightTraceViewer.installDependencies",
+          "when": "view == playwrightTraceViewer.tests && viewItem == playwrightInstallDependencies",
+          "group": "inline@1"
+        },
+        {
+          "command": "playwrightTraceViewer.runTestNode",
+          "when": "view == playwrightTraceViewer.tests && viewItem =~ /playwrightTest(File|Folder)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "playwrightTraceViewer.openTestFile",
+          "when": "view == playwrightTraceViewer.tests && viewItem == playwrightTestFile",
+          "group": "inline@2"
         }
       ]
     }

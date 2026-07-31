@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
 import { showReport } from './runner';
+import { registerPlaywrightTestExplorer } from './testExplorer';
 import { findLatestTrace, getWorkspaceRoot, validateTraceUri } from './trace';
 import { runTestsWithTrace } from './terminal';
 import { openTraceViewer, registerTraceViewer } from './viewer';
 
 export function activate(context: vscode.ExtensionContext): void {
   registerTraceViewer(context);
+  registerPlaywrightTestExplorer(context);
 
   const openLatestTraceCommand = vscode.commands.registerCommand(
     'playwrightTraceViewer.openLatestTrace',
