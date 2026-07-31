@@ -28,7 +28,7 @@ export function resolveRunnerCommand(packageRunner = getPackageRunner()): string
 }
 
 export function showTrace(tracePath: string, workspaceRoot: string): void {
-  runPlaywright(['show-trace', tracePath], findCommandCwd(workspaceRoot));
+  runPlaywright(['show-trace', tracePath], findCommandCwd(path.dirname(tracePath), workspaceRoot));
 }
 
 export function showReport(workspaceRoot: string): void {
@@ -73,8 +73,8 @@ function runPlaywright(playwrightArgs: string[], workspaceRoot: string): void {
   child.unref();
 }
 
-function findCommandCwd(workspaceRoot: string): string {
-  let current = workspaceRoot;
+function findCommandCwd(startDir: string, workspaceRoot = startDir): string {
+  let current = startDir;
 
   while (true) {
     if (fs.existsSync(path.join(current, 'package.json'))) {

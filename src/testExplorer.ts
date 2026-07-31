@@ -38,6 +38,17 @@ type ResultFileNode = {
 
 type TestFramework = 'playwright' | 'vitest';
 
+type TestFileTarget = {
+  framework: TestFramework;
+  uri: vscode.Uri;
+};
+
+type TestRunGroup = {
+  cwd: string;
+  framework: TestFramework;
+  testPaths: string[];
+};
+
 export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext): void {
   const provider = new PlaywrightTestProvider();
   const treeView = vscode.window.createTreeView('playwrightTraceViewer.tests', {
@@ -526,32 +537,27 @@ async function runTests(node?: TestNode): Promise<void> {
   }
 
   if (node?.type === 'file') {
-    runTestFramework(workspaceRoot, node.framework, [node.relativePath]);
+    const group = await getTestRunGroup(workspaceRoot, node);
+    runTestFramework(group.cwd, group.framework, group.testPaths);
     return;
   }
 
   if (node?.type === 'folder') {
-    const filesByFramework = groupFilesByFramework(node.files);
-    runGroupedTests(workspaceRoot, filesByFramework);
+    const groups = await groupTestFilesByProject(workspaceRoot, node.files);
+    runGroupedTests(groups);
     return;
   }
 
   const files = await vscode.workspace.findFiles(getTestGlob(), getExcludeGlob());
   const testFiles = await filterTestFiles(files);
-  const filesByFramework = new Map<TestFramework, string[]>();
+  const groups = await groupTestFilesByProject(workspaceRoot, testFiles);
 
-  for (const file of testFiles) {
-    const paths = filesByFramework.get(file.framework) ?? [];
-    paths.push(path.relative(workspaceRoot, file.uri.fsPath));
-    filesByFramework.set(file.framework, paths);
-  }
-
-  if (filesByFramework.size === 0) {
+  if (groups.length === 0) {
     vscode.window.showInformationMessage('No supported Playwright or Vitest test files found.');
     return;
   }
 
-  runGroupedTests(workspaceRoot, filesByFramework);
+  runGroupedTests(groups);
 }
 
 function getTerminalRunner(): string {
@@ -567,33 +573,71 @@ function getTerminalRunner(): string {
   return packageRunner;
 }
 
-function groupFilesByFramework(files: Array<FileNode | ResultFileNode>): Map<TestFramework, string[]> {
-  const groups = new Map<TestFramework, string[]>();
+async function groupTestFilesByProject(
+  workspaceRoot: string,
+  files: Array<TestFileTarget | ResultFileNode>
+): Promise<TestRunGroup[]> {
+  const groups = new Map<string, TestRunGroup>();
 
   for (const file of files) {
-    if (file.type !== 'file') {
+    if (!('framework' in file)) {
       continue;
     }
 
-    const paths = groups.get(file.framework) ?? [];
-    paths.push(file.relativePath);
-    groups.set(file.framework, paths);
+    const group = await getTestRunGroup(workspaceRoot, file);
+    const key = `${group.cwd}\0${group.framework}`;
+    const existing = groups.get(key);
+
+    if (existing) {
+      existing.testPaths.push(...group.testPaths);
+    } else {
+      groups.set(key, group);
+    }
   }
 
-  return groups;
+  return [...groups.values()];
 }
 
-function runGroupedTests(workspaceRoot: string, filesByFramework: Map<TestFramework, string[]>): void {
-  for (const [framework, files] of filesByFramework) {
-    runTestFramework(workspaceRoot, framework, files);
+async function getTestRunGroup(workspaceRoot: string, file: TestFileTarget): Promise<TestRunGroup> {
+  const cwd = await findNearestPackageRoot(path.dirname(file.uri.fsPath), workspaceRoot);
+
+  return {
+    cwd,
+    framework: file.framework,
+    testPaths: [path.relative(cwd, file.uri.fsPath)]
+  };
+}
+
+async function findNearestPackageRoot(startDir: string, workspaceRoot: string): Promise<string> {
+  let current = startDir;
+
+  while (current.startsWith(workspaceRoot)) {
+    if (await pathExists(path.join(current, 'package.json'))) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+
+    current = parent;
+  }
+
+  return workspaceRoot;
+}
+
+function runGroupedTests(groups: TestRunGroup[]): void {
+  for (const group of groups) {
+    runTestFramework(group.cwd, group.framework, group.testPaths);
   }
 }
 
-function runTestFramework(workspaceRoot: string, framework: TestFramework, testPaths: string[] = []): void {
+function runTestFramework(cwd: string, framework: TestFramework, testPaths: string[] = []): void {
   const runner = getTerminalRunner();
   const args = framework === 'vitest'
     ? [runner, 'vitest', 'run', ...testPaths]
     : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on'];
 
-  runInTerminal(workspaceRoot, args);
+  runInTerminal(cwd, args);
 }
