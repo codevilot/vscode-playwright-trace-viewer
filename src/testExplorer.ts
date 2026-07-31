@@ -22,6 +22,7 @@ type FileNode = {
   type: 'file';
   label: string;
   relativePath: string;
+  framework: TestFramework;
   uri: vscode.Uri;
   results: ResultFileNode[];
 };
@@ -34,6 +35,8 @@ type ResultFileNode = {
   uri: vscode.Uri;
   mtimeMs: number;
 };
+
+type TestFramework = 'playwright' | 'vitest';
 
 export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext): void {
   const provider = new PlaywrightTestProvider();
@@ -161,9 +164,9 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
     item.description = path.dirname(element.relativePath);
     item.contextValue = 'playwrightTestFile';
-    item.iconPath = new vscode.ThemeIcon('beaker');
+    item.iconPath = new vscode.ThemeIcon(element.framework === 'vitest' ? 'testing-view-icon' : 'beaker');
     item.resourceUri = element.uri;
-    item.tooltip = element.relativePath;
+    item.tooltip = `${element.framework}: ${element.relativePath}`;
     item.command = {
       command: 'playwrightTraceViewer.openTestFile',
       title: 'Open Test File',
@@ -198,24 +201,28 @@ async function discoverTests(fileNameFilter: string, resultFiles: ResultFileNode
   }
 
   const files = await vscode.workspace.findFiles(getTestGlob(), getExcludeGlob());
-  const testFiles = await filterPlaywrightFiles(files);
+  const testFiles = await filterTestFiles(files);
   const filteredTestFiles = fileNameFilter
     ? testFiles.filter((file) => {
-      const relativePath = path.relative(workspaceRoot, file.fsPath).toLowerCase();
+      const relativePath = path.relative(workspaceRoot, file.uri.fsPath).toLowerCase();
       return relativePath.includes(fileNameFilter);
     })
     : testFiles;
   const folders = new Map<string, Array<FileNode | ResultFileNode>>();
 
-  for (const uri of filteredTestFiles) {
+  for (const testFile of filteredTestFiles) {
+    const uri = testFile.uri;
     const relativePath = path.relative(workspaceRoot, uri.fsPath);
     const folder = path.dirname(relativePath);
     const fileNode: FileNode = {
       type: 'file',
       label: path.basename(relativePath),
       relativePath,
+      framework: testFile.framework,
       uri,
-      results: matchResultsToTestFile(relativePath, resultFiles)
+      results: testFile.framework === 'playwright'
+        ? matchResultsToTestFile(relativePath, resultFiles)
+        : []
     };
 
     const group = folders.get(folder) ?? [];
@@ -354,26 +361,36 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-async function filterPlaywrightFiles(files: vscode.Uri[]): Promise<vscode.Uri[]> {
+async function filterTestFiles(files: vscode.Uri[]): Promise<Array<{ uri: vscode.Uri; framework: TestFramework }>> {
   const results = await Promise.all(
     files.map(async (file) => {
       try {
         const content = await fs.readFile(file.fsPath, 'utf8');
-        return isPlaywrightTest(content) ? file : undefined;
+        const framework = detectTestFramework(content);
+        return framework ? { uri: file, framework } : undefined;
       } catch {
         return undefined;
       }
     })
   );
 
-  return results.filter((file): file is vscode.Uri => !!file);
+  return results.filter((file): file is { uri: vscode.Uri; framework: TestFramework } => !!file);
 }
 
-function isPlaywrightTest(content: string): boolean {
-  return content.includes('@playwright/test')
-    || content.includes('playwright/test')
-    || /\btest\.describe\s*\(/.test(content)
-    || /\btest\s*\(/.test(content);
+function detectTestFramework(content: string): TestFramework | undefined {
+  if (content.includes('from "vitest"') || content.includes("from 'vitest'")) {
+    return 'vitest';
+  }
+
+  if (content.includes('@playwright/test') || content.includes('playwright/test')) {
+    return 'playwright';
+  }
+
+  if (/\btest\.describe\s*\(/.test(content) || /\btest\s*\(/.test(content)) {
+    return 'playwright';
+  }
+
+  return undefined;
 }
 
 function getTestGlob(): string {
@@ -496,7 +513,7 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-function runTests(node?: TestNode): void {
+async function runTests(node?: TestNode): Promise<void> {
   if (node && node.type !== 'file' && node.type !== 'folder') {
     return;
   }
@@ -504,21 +521,37 @@ function runTests(node?: TestNode): void {
   const workspaceRoot = getWorkspaceRoot();
 
   if (!workspaceRoot) {
-    vscode.window.showErrorMessage('Open a workspace folder before running Playwright tests.');
+    vscode.window.showErrorMessage('Open a workspace folder before running tests.');
     return;
   }
 
-  const runner = getTerminalRunner();
-  const args = [runner, 'playwright', 'test'];
-
   if (node?.type === 'file') {
-    args.push(node.relativePath);
-  } else if (node?.type === 'folder' && node.relativePath !== '.') {
-    args.push(node.relativePath);
+    runTestFramework(workspaceRoot, node.framework, [node.relativePath]);
+    return;
   }
 
-  args.push('--trace', 'on');
-  runInTerminal(workspaceRoot, args);
+  if (node?.type === 'folder') {
+    const filesByFramework = groupFilesByFramework(node.files);
+    runGroupedTests(workspaceRoot, filesByFramework);
+    return;
+  }
+
+  const files = await vscode.workspace.findFiles(getTestGlob(), getExcludeGlob());
+  const testFiles = await filterTestFiles(files);
+  const filesByFramework = new Map<TestFramework, string[]>();
+
+  for (const file of testFiles) {
+    const paths = filesByFramework.get(file.framework) ?? [];
+    paths.push(path.relative(workspaceRoot, file.uri.fsPath));
+    filesByFramework.set(file.framework, paths);
+  }
+
+  if (filesByFramework.size === 0) {
+    vscode.window.showInformationMessage('No supported Playwright or Vitest test files found.');
+    return;
+  }
+
+  runGroupedTests(workspaceRoot, filesByFramework);
 }
 
 function getTerminalRunner(): string {
@@ -532,4 +565,35 @@ function getTerminalRunner(): string {
   }
 
   return packageRunner;
+}
+
+function groupFilesByFramework(files: Array<FileNode | ResultFileNode>): Map<TestFramework, string[]> {
+  const groups = new Map<TestFramework, string[]>();
+
+  for (const file of files) {
+    if (file.type !== 'file') {
+      continue;
+    }
+
+    const paths = groups.get(file.framework) ?? [];
+    paths.push(file.relativePath);
+    groups.set(file.framework, paths);
+  }
+
+  return groups;
+}
+
+function runGroupedTests(workspaceRoot: string, filesByFramework: Map<TestFramework, string[]>): void {
+  for (const [framework, files] of filesByFramework) {
+    runTestFramework(workspaceRoot, framework, files);
+  }
+}
+
+function runTestFramework(workspaceRoot: string, framework: TestFramework, testPaths: string[] = []): void {
+  const runner = getTerminalRunner();
+  const args = framework === 'vitest'
+    ? [runner, 'vitest', 'run', ...testPaths]
+    : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on'];
+
+  runInTerminal(workspaceRoot, args);
 }
