@@ -179,7 +179,269 @@ function renderTraceViewerIndexWithKeyboardShortcuts(): string {
     'index.html'
   );
   const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
-  const shortcutScript = `<script>
+  const viewerCustomizations = `<style>
+.timeline-view-container.pw-tv-youtube-timeline {
+  border-top: 1px solid var(--vscode-panel-border);
+  border-bottom: 0;
+  background: var(--vscode-panel-background);
+}
+
+.pw-tv-youtube-timeline .timeline-view {
+  height: 38px;
+  margin: 0 14px;
+  padding-top: 0;
+  justify-content: flex-end;
+  cursor: pointer;
+}
+
+.pw-tv-youtube-timeline .film-strip {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.pw-tv-youtube-timeline .film-strip-lanes {
+  height: 1px;
+  min-height: 1px;
+  max-height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.pw-tv-youtube-timeline .film-strip-frame {
+  box-shadow: none;
+}
+
+.pw-tv-youtube-timeline .film-strip-hover {
+  top: auto !important;
+  bottom: 34px;
+  max-width: min(420px, 45vw);
+  overflow: hidden;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-panel-border);
+  transform: none;
+}
+
+.pw-tv-youtube-timeline .film-strip-hover > div:first-child {
+  width: auto !important;
+  height: auto !important;
+}
+
+.pw-tv-youtube-timeline .film-strip-hover img {
+  display: block;
+  width: auto !important;
+  height: auto !important;
+  max-width: min(420px, 45vw);
+  max-height: min(260px, 38vh);
+  object-fit: contain;
+}
+
+.pw-tv-youtube-timeline .film-strip-hover-title {
+  max-width: min(420px, 45vw);
+  background: var(--vscode-panel-background);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pw-tv-youtube-timeline .timeline-time,
+.pw-tv-youtube-timeline .timeline-divider {
+  display: none;
+}
+
+.pw-tv-youtube-timeline .timeline-grid {
+  display: none;
+}
+
+.pw-tv-youtube-timeline .timeline-window {
+  bottom: 0;
+  z-index: 2;
+}
+
+.pw-tv-youtube-timeline .timeline-window-drag {
+  height: 38px;
+}
+
+.pw-tv-youtube-timeline .playback-scrubber {
+  height: 28px;
+  z-index: 3;
+}
+
+.pw-tv-youtube-timeline .playback-track,
+.pw-tv-youtube-timeline .playback-track-filled {
+  top: 13px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.pw-tv-youtube-timeline .playback-tick {
+  top: 10px;
+  height: 10px;
+  opacity: .45;
+}
+
+.pw-tv-youtube-timeline .playback-thumb {
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+}
+
+body.pw-tv-focus-mode .pw-tv-properties-sidebar {
+  flex-basis: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+}
+
+body.pw-tv-focus-mode .pw-tv-properties-sidebar.pw-tv-details-in-nav {
+  display: none !important;
+}
+
+body.pw-tv-focus-mode .pw-tv-action-sidebar.pw-tv-action-details-selected .pw-tv-properties-sidebar.pw-tv-details-in-nav {
+  display: flex !important;
+  flex: auto !important;
+  flex-basis: auto !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  background: var(--vscode-panel-background);
+}
+
+body.pw-tv-focus-mode .pw-tv-action-sidebar.pw-tv-action-details-selected .pw-tv-action-tab-content > :not(.pw-tv-properties-sidebar) {
+  display: none !important;
+}
+
+body.pw-tv-focus-mode .pw-tv-action-sidebar.pw-tv-action-details-selected .pw-tv-details-nav-tab {
+  background-color: var(--vscode-tab-activeBackground);
+}
+
+body.pw-tv-focus-mode .pw-tv-details-nav-tab {
+  height: 100%;
+}
+
+body.pw-tv-focus-mode .pw-tv-properties-resizer {
+  display: none !important;
+}
+
+body.pw-tv-focus-mode .pw-tv-action-sidebar {
+  display: flex;
+  flex-basis: clamp(220px, 24vw, 300px) !important;
+}
+
+body.pw-tv-focus-mode .pw-tv-action-split {
+  flex-direction: row-reverse !important;
+}
+
+body.pw-tv-focus-mode.pw-tv-actions-bottom .pw-tv-action-split {
+  flex-direction: column !important;
+}
+
+body.pw-tv-focus-mode.pw-tv-actions-bottom .pw-tv-action-sidebar {
+  flex-basis: clamp(140px, 24vh, 220px) !important;
+  width: auto !important;
+  border-top: 1px solid var(--vscode-panel-border) !important;
+  border-right: 0 !important;
+}
+
+body.pw-tv-focus-mode.pw-tv-actions-bottom .pw-tv-action-resizer {
+  display: none !important;
+}
+
+body.pw-tv-focus-mode.pw-tv-hide-actions .pw-tv-action-sidebar {
+  flex-basis: 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+}
+
+body.pw-tv-focus-mode.pw-tv-hide-actions .pw-tv-action-resizer {
+  display: none !important;
+}
+
+.pw-tv-layout-controls {
+  position: fixed;
+  top: 6px;
+  right: 8px;
+  z-index: 500;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-sideBar-background);
+  box-shadow: #0002 0 1.6px 10px, #0000001c 0 .3px 10px;
+}
+
+.pw-tv-layout-controls button {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: var(--vscode-sideBarTitle-foreground);
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pw-tv-layout-controls button:hover,
+body.pw-tv-focus-mode:not(.pw-tv-hide-actions) .pw-tv-layout-controls [data-panel="actions"],
+body.pw-tv-actions-bottom .pw-tv-layout-controls [data-panel="placement"],
+body:not(.pw-tv-focus-mode) .pw-tv-layout-controls [data-panel="layout"] {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.pw-tv-layout-controls .codicon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+body.pw-tv-focus-mode .snapshot-wrapper {
+  padding: 4px;
+}
+
+body.pw-tv-focus-mode .snapshot-container {
+  box-shadow: 0 8px 18px #0002, 0 1px 3px #0000001a;
+}
+
+body.pw-tv-focus-mode .workbench-action-filter {
+  margin-top: 0;
+}
+
+body.pw-tv-focus-mode .workbench-action-filter input[type=search] {
+  line-height: 18px;
+  padding: 3px 8px;
+}
+
+body.pw-tv-focus-mode .tabbed-pane .toolbar {
+  min-height: 26px;
+}
+
+body.pw-tv-focus-mode .tabbed-pane-tab {
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+body.pw-tv-focus-mode .tree-view-entry {
+  line-height: 24px;
+}
+
+body.pw-tv-focus-mode .action-title-selector {
+  display: none;
+}
+</style>
+<script>
 (() => {
   let hasStartedPlayback = false;
   let replayingClick = false;
@@ -252,10 +514,146 @@ function renderTraceViewerIndexWithKeyboardShortcuts(): string {
       hasStartedPlayback = true;
     }
   }, true);
+
+  const placeTimelineBelowSnapshot = () => {
+    const timeline = document.querySelector('.timeline-view-container');
+    const snapshotTab = document.querySelector('.snapshot-tab');
+    if (!timeline || !snapshotTab)
+      return;
+    timeline.classList.add('pw-tv-youtube-timeline');
+    if (timeline.parentElement === snapshotTab)
+      return;
+    snapshotTab.appendChild(timeline);
+  };
+
+  const getDirectChild = (parent, className) => {
+    if (!parent)
+      return null;
+    return [...parent.children].find(child => child.classList.contains(className)) || null;
+  };
+
+  const tagWorkbenchPanels = () => {
+    const actionList = document.querySelector('.action-list-container');
+    const actionSidebar = actionList?.closest('.split-view-sidebar');
+    const actionSplit = actionSidebar?.parentElement;
+    const actionResizer = getDirectChild(actionSplit, 'split-view-resizer');
+    const propertiesSidebar = [...document.querySelectorAll('.split-view-sidebar')]
+      .find(sidebar => sidebar !== actionSidebar && !sidebar.contains(actionList) && sidebar.querySelector('.tabbed-pane'));
+    const propertiesSplit = propertiesSidebar?.parentElement;
+    const propertiesResizer = getDirectChild(propertiesSplit, 'split-view-resizer');
+
+    actionSidebar?.classList.add('pw-tv-action-sidebar');
+    actionSplit?.classList.add('pw-tv-action-split');
+    actionResizer?.classList.add('pw-tv-action-resizer');
+    propertiesSidebar?.classList.add('pw-tv-properties-sidebar');
+    propertiesResizer?.classList.add('pw-tv-properties-resizer');
+  };
+
+  const ensureDetailsNavigatorTab = () => {
+    const actionSidebar = document.querySelector('.pw-tv-action-sidebar');
+    const propertiesSidebar = document.querySelector('.pw-tv-properties-sidebar');
+    const actionToolbar = actionSidebar?.querySelector('.toolbar');
+    const actionContent = actionSidebar?.querySelector('.tab-content');
+    if (!actionSidebar || !propertiesSidebar || !actionToolbar || !actionContent)
+      return;
+
+    actionContent.classList.add('pw-tv-action-tab-content');
+    propertiesSidebar.classList.add('pw-tv-details-in-nav');
+    if (propertiesSidebar.parentElement !== actionContent)
+      actionContent.appendChild(propertiesSidebar);
+
+    let detailsTab = actionToolbar.querySelector('.pw-tv-details-nav-tab');
+    if (!detailsTab) {
+      detailsTab = document.createElement('div');
+      detailsTab.className = 'tabbed-pane-tab pw-tv-details-nav-tab';
+      detailsTab.tabIndex = 0;
+      detailsTab.setAttribute('role', 'tab');
+      detailsTab.innerHTML = '<span class="tabbed-pane-tab-label">Details</span>';
+      detailsTab.addEventListener('click', () => {
+        actionSidebar.classList.add('pw-tv-action-details-selected');
+      });
+      detailsTab.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ')
+          return;
+        event.preventDefault();
+        actionSidebar.classList.add('pw-tv-action-details-selected');
+      });
+      const realTabs = [...actionToolbar.children]
+        .filter(child => child.classList.contains('tabbed-pane-tab') && !child.classList.contains('pw-tv-details-nav-tab'));
+      const lastRealTab = realTabs[realTabs.length - 1];
+      actionToolbar.insertBefore(detailsTab, lastRealTab?.nextSibling || null);
+    }
+
+    for (const tab of actionToolbar.querySelectorAll('.tabbed-pane-tab:not(.pw-tv-details-nav-tab)')) {
+      if (tab.dataset.pwTvClearsDetails === 'true')
+        continue;
+      tab.dataset.pwTvClearsDetails = 'true';
+      tab.addEventListener('click', () => {
+        actionSidebar.classList.remove('pw-tv-action-details-selected');
+      });
+    }
+  };
+
+  const ensureLayoutControls = () => {
+    if (document.querySelector('.pw-tv-layout-controls'))
+      return;
+    document.body.classList.add('pw-tv-focus-mode');
+
+    const controls = document.createElement('div');
+    controls.className = 'pw-tv-layout-controls';
+
+    const setButtonIcon = (button, icon) => {
+      button.innerHTML = '<span class="codicon codicon-' + icon + '"></span>';
+    };
+
+    const makeButton = (panel, icon, title, onClick) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.panel = panel;
+      button.title = title;
+      button.setAttribute('aria-label', title);
+      setButtonIcon(button, icon);
+      button.addEventListener('click', onClick);
+      controls.appendChild(button);
+      return button;
+    };
+
+    makeButton('actions', 'layout-sidebar-left', 'Toggle actions panel', () => {
+      document.body.classList.toggle('pw-tv-hide-actions');
+    });
+    makeButton('placement', 'layout-sidebar-left', 'Dock actions to bottom', event => {
+      document.body.classList.toggle('pw-tv-actions-bottom');
+      const isBottom = document.body.classList.contains('pw-tv-actions-bottom');
+      setButtonIcon(event.currentTarget, isBottom ? 'layout-panel' : 'layout-sidebar-left');
+      event.currentTarget.title = isBottom ? 'Dock actions to left' : 'Dock actions to bottom';
+      event.currentTarget.setAttribute('aria-label', event.currentTarget.title);
+    });
+    makeButton('layout', 'screen-full', 'Exit full view', event => {
+      document.body.classList.toggle('pw-tv-focus-mode');
+      document.body.classList.remove('pw-tv-hide-actions');
+      const isFocusMode = document.body.classList.contains('pw-tv-focus-mode');
+      setButtonIcon(event.currentTarget, isFocusMode ? 'screen-full' : 'screen-normal');
+      event.currentTarget.title = isFocusMode ? 'Exit full view' : 'Enter full view';
+      event.currentTarget.setAttribute('aria-label', event.currentTarget.title);
+    });
+
+    document.body.appendChild(controls);
+  };
+
+  const applyViewerLayout = () => {
+    placeTimelineBelowSnapshot();
+    tagWorkbenchPanels();
+    ensureDetailsNavigatorTab();
+    ensureLayoutControls();
+  };
+
+  const observer = new MutationObserver(applyViewerLayout);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  applyViewerLayout();
 })();
 </script>`;
 
-  return indexHtml.replace('</body>', `${shortcutScript}\n  </body>`);
+  return indexHtml.replace('</body>', `${viewerCustomizations}\n  </body>`);
 }
 
 function buildTraceViewerRedirectPath(tracePath: string): string {
