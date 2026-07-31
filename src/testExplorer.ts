@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot } from './trace';
-import { runInTerminal } from './terminal';
+import { runInTerminal, runTestsWithTrace } from './terminal';
 
 type TestNode = InstallNode | FolderNode | FileNode | ResultFileNode;
 
@@ -669,26 +669,23 @@ async function runGroupedTests(groups: TestRunGroup[]): Promise<void> {
 }
 
 async function runTestFramework(cwd: string, framework: TestFramework, testPaths: string[] = []): Promise<void> {
+  if (framework === 'playwright') {
+    const tracePath = await runTestsWithTrace(cwd, 'on', testPaths);
+    if (tracePath) {
+      await vscode.commands.executeCommand('playwrightTraceViewer.openSelectedTrace', vscode.Uri.file(tracePath));
+    } else {
+      vscode.window.showInformationMessage('Playwright finished, but no trace.zip was generated.');
+    }
+    return;
+  }
+
   const runner = getTerminalRunner();
   const localBin = await findLocalFrameworkBin(cwd, framework);
-  const outputArgs = framework === 'playwright'
-    ? ['--output', getPlaywrightOutputDir(testPaths)]
-    : [];
-  const args = framework === 'vitest'
-    ? localBin
-      ? [localBin, 'run', ...testPaths]
-      : [runner, 'vitest', 'run', ...testPaths]
-    : localBin
-      ? [localBin, 'test', ...testPaths, '--trace', 'on', ...outputArgs]
-      : [runner, 'playwright', 'test', ...testPaths, '--trace', 'on', ...outputArgs];
+  const args = localBin
+    ? [localBin, 'run', ...testPaths]
+    : [runner, 'vitest', 'run', ...testPaths];
 
   runInTerminal(cwd, args);
-}
-
-function getPlaywrightOutputDir(testPaths: string[]): string {
-  const slug = slugify(testPaths.length > 0 ? testPaths.join('-') : 'all') || 'all';
-
-  return path.join('test-results', 'playwright-trace-viewer', slug);
 }
 
 async function findLocalFrameworkBin(cwd: string, framework: TestFramework): Promise<string | undefined> {

@@ -103,7 +103,7 @@ function openReport(): void {
   showReport(workspaceRoot);
 }
 
-function runTests(traceMode: 'on' | 'retain-on-failure'): void {
+async function runTests(traceMode: 'on' | 'retain-on-failure'): Promise<void> {
   const workspaceRoot = getWorkspaceRoot();
 
   if (!workspaceRoot) {
@@ -111,5 +111,10 @@ function runTests(traceMode: 'on' | 'retain-on-failure'): void {
     return;
   }
 
-  runTestsWithTrace(workspaceRoot, traceMode);
+  const tracePath = await runTestsWithTrace(workspaceRoot, traceMode);
+  if (tracePath) {
+    await openTraceViewer(tracePath);
+  } else {
+    vscode.window.showInformationMessage('Playwright finished, but no trace.zip was generated.');
+  }
 }
