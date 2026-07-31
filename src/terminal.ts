@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { isTraceFilePath } from './trace';
 
 const terminalName = 'Playwright Trace Viewer';
 const outputChannelName = 'Playwright Trace Viewer';
@@ -69,7 +70,7 @@ async function runPlaywrightInExtension(
     return undefined;
   }
 
-  return copyLatestTrace(latestTrace, path.resolve(cwd, 'test-results', 'playwright-trace-viewer', 'latest', 'trace.zip'));
+  return copyLatestTrace(latestTrace, path.resolve(cwd, 'test-results', 'playwright-trace-viewer', 'latest', getLatestTraceFileName(outputDir)));
 }
 
 function runProcess(
@@ -172,7 +173,7 @@ async function collectTraceFiles(rootDir: string, startedAt: number): Promise<Ar
       return collectTraceFiles(entryPath, startedAt);
     }
 
-    if (!entry.isFile() || entry.name !== 'trace.zip') {
+    if (!entry.isFile() || !isTraceFilePath(entry.name)) {
       return [];
     }
 
@@ -202,6 +203,10 @@ function getPlaywrightOutputDir(testPaths: string[]): string {
   const slug = slugify(testPaths.length > 0 ? testPaths.join('-') : 'all') || 'all';
 
   return path.join('test-results', 'playwright-trace-viewer', slug);
+}
+
+function getLatestTraceFileName(outputDir: string): string {
+  return `${path.basename(outputDir)}-trace.zip`;
 }
 
 function slugify(value: string): string {

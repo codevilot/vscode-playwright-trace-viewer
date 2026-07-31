@@ -9,7 +9,7 @@ export function getWorkspaceRoot(): string | undefined {
 export function getTraceGlob(): string {
   return vscode.workspace
     .getConfiguration('playwrightTraceViewer')
-    .get<string>('traceGlob', 'test-results/**/trace.zip');
+    .get<string>('traceGlob', 'test-results/**/*trace.zip');
 }
 
 export async function findLatestTrace(): Promise<string | undefined> {
@@ -38,9 +38,13 @@ export function validateTraceUri(uri: vscode.Uri | undefined): string | undefine
     return undefined;
   }
 
-  if (path.basename(uri.fsPath) !== 'trace.zip') {
+  if (!isTraceFilePath(uri.fsPath)) {
     return undefined;
   }
 
   return uri.fsPath;
+}
+
+export function isTraceFilePath(filePath: string): boolean {
+  return /(?:^|[-_.])trace\.zip$/i.test(path.basename(filePath));
 }

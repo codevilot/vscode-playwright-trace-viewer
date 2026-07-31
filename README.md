@@ -33,7 +33,7 @@ npx playwright test --trace on
 
 `playwrightTraceViewer.traceGlob`
 
-Default: `test-results/**/trace.zip`
+Default: `test-results/**/*trace.zip`
 
 `playwrightTraceViewer.packageRunner`
 
@@ -50,6 +50,6 @@ Allowed examples: `npx`, `pnpm`, `yarn`
 5. Open a Playwright project in the Extension Development Host.
 6. Run one of the contributed commands from the Command Palette.
 
-For a typical Playwright workflow, run `Playwright Trace Viewer: Run Tests Retain Trace on Failure`, then use `Playwright Trace Viewer: Open Latest Trace` after a failing test generates `test-results/**/trace.zip`.
+For a typical Playwright workflow, run `Playwright Trace Viewer: Run Tests Retain Trace on Failure`, then use `Playwright Trace Viewer: Open Latest Trace` after a failing test generates a trace under `test-results`.
 
 Double-clicking `trace.zip` in Explorer opens it through this extension and launches the Playwright trace viewer. You can also right-click `trace.zip` in Explorer and choose `Open Playwright Trace`, or run `Playwright Trace Viewer: Open Latest Trace`.

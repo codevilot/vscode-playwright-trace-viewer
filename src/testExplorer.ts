@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { getWorkspaceRoot } from './trace';
+import { getWorkspaceRoot, isTraceFilePath } from './trace';
 import { runInTerminal, runTestsWithTrace } from './terminal';
 
 type TestNode = InstallNode | FolderNode | FileNode | ResultFileNode;
@@ -16,6 +16,7 @@ type FolderNode = {
   label: string;
   relativePath: string;
   files: Array<FileNode | ResultFileNode>;
+  resultOnly?: boolean;
 };
 
 type FileNode = {
@@ -75,7 +76,8 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('playwrightTraceViewer.runAllTestsFromExplorer', () => runTests()),
     vscode.commands.registerCommand('playwrightTraceViewer.runTestNode', (node?: TestNode) => runTests(node)),
     vscode.commands.registerCommand('playwrightTraceViewer.openTestFile', (node?: FileNode) => openTestFile(node)),
-    vscode.commands.registerCommand('playwrightTraceViewer.openResultFile', (node?: ResultFileNode) => openResultFile(node))
+    vscode.commands.registerCommand('playwrightTraceViewer.openResultFile', (node?: ResultFileNode) => openResultFile(node)),
+    vscode.commands.registerCommand('playwrightTraceViewer.copyTestPath', (node?: TestNode) => copyTestPath(node))
   );
 }
 
@@ -152,7 +154,7 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     if (element.type === 'folder') {
       const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
       item.description = `${element.files.length}`;
-      item.contextValue = 'playwrightTestFolder';
+      item.contextValue = element.resultOnly ? 'playwrightResultFolder' : 'playwrightTestFolder';
       item.iconPath = new vscode.ThemeIcon('folder');
       item.tooltip = element.relativePath;
       return item;
@@ -221,6 +223,7 @@ async function discoverTests(fileNameFilter: string, resultFiles: ResultFileNode
     })
     : testFiles;
   const folders = new Map<string, Array<FileNode | ResultFileNode>>();
+  const matchedResultPaths = new Set<string>();
 
   for (const testFile of filteredTestFiles) {
     const uri = testFile.uri;
@@ -241,19 +244,36 @@ async function discoverTests(fileNameFilter: string, resultFiles: ResultFileNode
     group.push(fileNode);
     group.push(...fileNode.results.map((result) => ({
       ...result,
-      label: getInlineResultLabel(fileNode.label, result)
+      label: getInlineResultLabel(fileNode.label, result, fileNode.results)
     })));
+    fileNode.results.forEach((result) => matchedResultPaths.add(result.uri.fsPath));
     folders.set(folder, group);
   }
 
-  return [...folders.entries()]
+  const nodes: FolderNode[] = [...folders.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([relativePath, filesInFolder]) => ({
-      type: 'folder',
+      type: 'folder' as const,
       label: relativePath === '.' ? 'Workspace Root' : relativePath,
       relativePath,
       files: filesInFolder.sort(compareTestExplorerItems)
     }));
+  const unmatchedResults = resultFiles.filter((result) => !matchedResultPaths.has(result.uri.fsPath));
+
+  if (!fileNameFilter && unmatchedResults.length > 0) {
+    nodes.push({
+      type: 'folder',
+      label: 'Test Results',
+      relativePath: 'test-results',
+      files: unmatchedResults.map((result) => ({
+        ...result,
+        label: getStandaloneResultLabel(result)
+      })),
+      resultOnly: true
+    });
+  }
+
+  return nodes;
 }
 
 function compareTestExplorerItems(a: FileNode | ResultFileNode, b: FileNode | ResultFileNode): number {
@@ -272,16 +292,28 @@ function compareTestExplorerItems(a: FileNode | ResultFileNode, b: FileNode | Re
   return a.label.localeCompare(b.label);
 }
 
-function getInlineResultLabel(testFileLabel: string, result: ResultFileNode): string {
-  const resultName = path.basename(result.relativePath) === 'trace.zip'
-    ? 'trace'
-    : path.basename(result.relativePath);
+function getInlineResultLabel(testFileLabel: string, result: ResultFileNode, results: ResultFileNode[]): string {
+  if (!isTraceFilePath(result.relativePath)) {
+    return `${testFileLabel}-${path.basename(result.relativePath)}`;
+  }
+
+  const traceCount = results.filter((candidate) => isTraceFilePath(candidate.relativePath)).length;
+  const resultName = traceCount > 1
+    ? `trace (${path.basename(result.resultDirRelativePath)})`
+    : 'trace';
 
   return `${testFileLabel}-${resultName}`;
 }
 
 function getTestLabelFromResultLabel(label: string): string {
   return label.replace(/-(trace|[^-]+)$/i, '');
+}
+
+function getStandaloneResultLabel(result: ResultFileNode): string {
+  const resultDir = path.basename(result.resultDirRelativePath);
+  const fileName = isTraceFilePath(result.relativePath) ? 'trace' : path.basename(result.relativePath);
+
+  return `${resultDir}-${fileName}`;
 }
 
 async function discoverResults(): Promise<ResultFileNode[]> {
@@ -332,24 +364,41 @@ function matchResultsToTestFile(relativePath: string, resultFiles: ResultFileNod
       return true;
     }
 
-    const resultSlug = slugify(path.basename(file.resultDirRelativePath));
+    const resultSlugs = getResultPathSlugs(file.resultDirRelativePath);
 
-    return candidates.some((candidate) => resultSlug === candidate || resultSlug.startsWith(`${candidate}-`));
+    return candidates.some((candidate) => resultSlugs.some((slug) => slug === candidate || slug.startsWith(`${candidate}-`)));
   });
 }
 
+function getResultPathSlugs(relativePath: string): string[] {
+  return relativePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .map(slugify)
+    .filter(Boolean);
+}
+
 function getTestResultSlugCandidates(relativePath: string): string[] {
+  const withoutLastExtension = relativePath
+    .replace(/\\/g, '/')
+    .replace(/\.[^.]+$/i, '');
   const withoutExtension = relativePath
     .replace(/\\/g, '/')
     .replace(/\.(spec|test)\.[^.]+$/i, '')
     .replace(/\.[^.]+$/i, '');
   const pathParts = withoutExtension.split('/').filter(Boolean);
+  const pathPartsWithSpec = withoutLastExtension.split('/').filter(Boolean);
   const withoutCommonRoot = ['test', 'tests', 'e2e', 'spec', 'specs'].includes(pathParts[0] ?? '')
     ? pathParts.slice(1)
     : pathParts;
+  const withoutCommonRootWithSpec = ['test', 'tests', 'e2e', 'spec', 'specs'].includes(pathPartsWithSpec[0] ?? '')
+    ? pathPartsWithSpec.slice(1)
+    : pathPartsWithSpec;
   const candidates = [
     slugify(withoutCommonRoot.join('-')),
-    slugify(pathParts.join('-'))
+    slugify(pathParts.join('-')),
+    slugify(withoutCommonRootWithSpec.join('-')),
+    slugify(pathPartsWithSpec.join('-'))
   ];
 
   return [...new Set(candidates.filter(Boolean))];
@@ -494,7 +543,7 @@ async function openResultFile(node?: ResultFileNode): Promise<void> {
     return;
   }
 
-  if (path.basename(node.uri.fsPath) === 'trace.zip') {
+  if (isTraceFilePath(node.uri.fsPath)) {
     await vscode.commands.executeCommand('playwrightTraceViewer.openSelectedTrace', node.uri);
     return;
   }
@@ -502,11 +551,19 @@ async function openResultFile(node?: ResultFileNode): Promise<void> {
   await vscode.commands.executeCommand('vscode.open', node.uri);
 }
 
+async function copyTestPath(node?: TestNode): Promise<void> {
+  if (!node || (node.type !== 'file' && node.type !== 'resultFile')) {
+    return;
+  }
+
+  await vscode.env.clipboard.writeText(node.uri.fsPath);
+}
+
 function getResultFileIcon(relativePath: string): vscode.ThemeIcon {
   const fileName = path.basename(relativePath);
   const extension = path.extname(fileName).toLowerCase();
 
-  if (fileName === 'trace.zip') {
+  if (isTraceFilePath(relativePath)) {
     return new vscode.ThemeIcon('preview');
   }
 
