@@ -35,6 +35,7 @@
     "onCommand:playwrightTraceViewer.runAllTestsFromExplorer",
     "onCommand:playwrightTraceViewer.runTestNode",
     "onCommand:playwrightTraceViewer.openTestFile",
+    "onCommand:playwrightTraceViewer.openResultFile",
     "onView:playwrightTraceViewer.tests"
   ],
   "main": "./dist/extension.js",
@@ -101,6 +102,11 @@
         "command": "playwrightTraceViewer.openTestFile",
         "title": "Playwright Trace Viewer: Open Test File",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "playwrightTraceViewer.openResultFile",
+        "title": "Playwright Trace Viewer: Open Test Result File",
+        "icon": "$(go-to-file)"
       }
     ],
     "viewsContainers": {
@@ -146,6 +152,11 @@
             "type": "string"
           },
           "description": "Additional glob patterns excluded from Playwright test discovery. VS Code search.exclude and files.exclude are also respected."
+        },
+        "playwrightTraceViewer.testResultGlob": {
+          "type": "string",
+          "default": "test-results/**/*",
+          "description": "Glob used to show Playwright test result files in the Tests sidebar."
         },
         "playwrightTraceViewer.packageRunner": {
           "type": "string",
@@ -218,6 +229,11 @@
           "command": "playwrightTraceViewer.openTestFile",
           "when": "view == playwrightTraceViewer.tests && viewItem == playwrightTestFile",
           "group": "inline@2"
+        },
+        {
+          "command": "playwrightTraceViewer.openResultFile",
+          "when": "view == playwrightTraceViewer.tests && viewItem == playwrightResultFile",
+          "group": "inline@1"
         }
       ]
     }
