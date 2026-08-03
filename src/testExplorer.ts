@@ -376,9 +376,98 @@ async function discoverResults(): Promise<ResultFileNode[]> {
       }
     })
   );
-  return resultFiles
+  return getLatestResultDirs(getVisibleExtensionResultFiles(resultFiles
     .filter((file): file is ResultFileNode => !!file)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.relativePath.localeCompare(b.relativePath))));
+}
+
+function getVisibleExtensionResultFiles(resultFiles: ResultFileNode[]): ResultFileNode[] {
+  const summaryDirs = new Set(
+    resultFiles
+      .filter((file) => {
+        const summaryDir = getExtensionRunSummaryDir(file.resultDirRelativePath);
+        return path.basename(file.relativePath) === 'trace.zip'
+          && !!summaryDir
+          && fileNormalizedPath(file.resultDirRelativePath) === summaryDir;
+      })
+      .map((file) => fileNormalizedPath(file.resultDirRelativePath))
+  );
+
+  return resultFiles.filter((file) => {
+    const summaryDir = getExtensionRunSummaryDir(file.resultDirRelativePath);
+
+    return !summaryDir
+      || fileNormalizedPath(file.resultDirRelativePath) === summaryDir
+      || !summaryDirs.has(summaryDir);
+  });
+}
+
+function fileNormalizedPath(relativePath: string): string {
+  return relativePath.replace(/\\/g, '/');
+}
+
+function getExtensionRunSummaryDir(relativePath: string): string | undefined {
+  const parts = fileNormalizedPath(relativePath).split('/');
+  const testResultsIndex = parts.indexOf('test-results');
+
+  if (testResultsIndex === -1 || parts.length <= testResultsIndex + 1) {
+    return undefined;
+  }
+
+  return parts.slice(0, testResultsIndex + 2).join('/');
+}
+
+function getLatestResultDirs(resultFiles: ResultFileNode[]): ResultFileNode[] {
+  const resultDirs = new Map<string, ResultFileNode[]>();
+
+  for (const file of resultFiles) {
+    const group = resultDirs.get(file.resultDirRelativePath) ?? [];
+    group.push(file);
+    resultDirs.set(file.resultDirRelativePath, group);
+  }
+
+  const latestByResultKey = new Map<string, ResultFileNode[]>();
+
+  for (const files of resultDirs.values()) {
+    const key = getResultDirDedupeKey(files);
+    const existing = latestByResultKey.get(key);
+
+    if (!existing || getResultDirMtime(files) > getResultDirMtime(existing)) {
+      latestByResultKey.set(key, files);
+    }
+  }
+
+  return [...latestByResultKey.values()]
+    .flat()
     .sort((a, b) => b.mtimeMs - a.mtimeMs || a.relativePath.localeCompare(b.relativePath));
+}
+
+function getResultDirDedupeKey(files: ResultFileNode[]): string {
+  const firstFile = files[0];
+
+  if (!firstFile) {
+    return '';
+  }
+
+  const sourceKey = firstFile.sourceFileSlugs.length > 0
+    ? [...firstFile.sourceFileSlugs].sort().join(',')
+    : 'unknown-source';
+
+  return `${sourceKey}\0${canonicalizeResultDirName(path.basename(firstFile.resultDirRelativePath))}`;
+}
+
+function getResultDirMtime(files: ResultFileNode[]): number {
+  return Math.max(...files.map((file) => file.mtimeMs));
+}
+
+function canonicalizeResultDirName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/-(chromium|firefox|webkit)$/i, '')
+    .replace(/-[a-f0-9]{5,}(?=-|$)/gi, '')
+    .replace(/--+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function matchResultsToTestFile(
@@ -506,9 +595,10 @@ function isVisibleResultFile(relativePath: string): boolean {
   const fileName = parts[parts.length - 1] ?? '';
   const latestIndex = parts.findIndex((part, index) => {
     return part === 'latest'
-      && index >= 2
-      && parts[index - 1] === 'playwright-trace-viewer'
-      && parts[index - 2] === 'test-results';
+      && (
+        (index >= 1 && parts[index - 1] === 'test-results')
+        || (index >= 2 && parts[index - 1] === 'playwright-trace-viewer' && parts[index - 2] === 'test-results')
+      );
   });
 
   return !fileName.startsWith('.')

@@ -54,6 +54,7 @@ async function runPlaywrightInExtension(
 
   output.show(true);
   output.appendLine(`$ ${command.runner} ${command.args.map(quoteShellArg).join(' ')}`);
+  await clearOutputDir(path.resolve(cwd, outputDir));
 
   const exitCode = await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
@@ -70,7 +71,10 @@ async function runPlaywrightInExtension(
     return undefined;
   }
 
-  return copyLatestTrace(latestTrace, path.resolve(cwd, 'test-results', 'playwright-trace-viewer', 'latest', getLatestTraceFileName(outputDir)));
+  return copyLatestTrace(latestTrace, [
+    path.resolve(cwd, outputDir, 'trace.zip'),
+    path.resolve(cwd, 'test-results', 'latest', getLatestTraceFileName(outputDir))
+  ]);
 }
 
 function runProcess(
@@ -184,10 +188,17 @@ async function collectTraceFiles(rootDir: string, startedAt: number): Promise<Ar
   return traces.flat();
 }
 
-async function copyLatestTrace(sourcePath: string, targetPath: string): Promise<string> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.copyFile(sourcePath, targetPath);
-  return targetPath;
+async function copyLatestTrace(sourcePath: string, targetPaths: string[]): Promise<string> {
+  for (const targetPath of targetPaths) {
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.copyFile(sourcePath, targetPath);
+  }
+
+  return targetPaths[0];
+}
+
+async function clearOutputDir(outputDir: string): Promise<void> {
+  await fs.rm(outputDir, { recursive: true, force: true });
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -202,7 +213,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 function getPlaywrightOutputDir(testPaths: string[]): string {
   const slug = slugify(testPaths.length > 0 ? testPaths.join('-') : 'all') || 'all';
 
-  return path.join('test-results', 'playwright-trace-viewer', slug);
+  return path.join('test-results', slug);
 }
 
 function getLatestTraceFileName(outputDir: string): string {
