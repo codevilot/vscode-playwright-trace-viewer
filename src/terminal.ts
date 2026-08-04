@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { isTraceFilePath } from './trace';
 
 const terminalName = 'Playwright Trace Viewer';
-const outputChannelName = 'Playwright Trace Viewer';
+export const outputChannelName = 'Playwright Trace Viewer';
 
 export async function runTestsWithTrace(
   workspaceRoot: string,
@@ -97,7 +97,7 @@ function runProcess(
   });
 }
 
-async function resolvePlaywrightCommand(
+export async function resolvePlaywrightCommand(
   cwd: string,
   playwrightArgs: string[]
 ): Promise<{ runner: string; args: string[] }> {

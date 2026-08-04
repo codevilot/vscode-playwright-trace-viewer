@@ -1,15 +1,14 @@
+import { spawn } from 'child_process';
+import * as syncFs from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot, isTraceFilePath } from './trace';
-import { runInTerminal, runTestsWithTrace } from './terminal';
+import { outputChannelName, resolvePlaywrightCommand, runInTerminal, runTestsWithTrace } from './terminal';
 
-type TestNode = InstallNode | FolderNode | FileNode | ResultFileNode;
+type TestNode = FolderNode | FileNode | ResultFileNode | TestSuiteNode | TestCaseNode;
 
-type InstallNode = {
-  type: 'install';
-  packageManager: string;
-};
+type TestExplorerViewMode = 'test' | 'file';
 
 type FolderNode = {
   type: 'folder';
@@ -38,11 +37,32 @@ type ResultFileNode = {
   mtimeMs: number;
 };
 
+type TestCaseNode = {
+  type: 'test';
+  label: string;
+  titlePath: string[];
+  relativePath: string;
+  line: number;
+  column: number;
+  projectName?: string;
+  framework: 'playwright';
+  uri: vscode.Uri;
+  results: ResultFileNode[];
+};
+
+type TestSuiteNode = {
+  type: 'suite';
+  label: string;
+  titlePath: string[];
+  children: Array<TestSuiteNode | TestCaseNode>;
+};
+
 type TestFramework = 'playwright' | 'vitest';
 
 type TestFileTarget = {
   framework: TestFramework;
   uri: vscode.Uri;
+  line?: number;
 };
 
 type TestRunGroup = {
@@ -55,10 +75,12 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
   const provider = new PlaywrightTestProvider();
   const treeView = vscode.window.createTreeView('playwrightTraceViewer.tests', {
     treeDataProvider: provider,
-    showCollapseAll: true
+    showCollapseAll: false
   });
   const refreshResults = () => provider.refreshResults();
   let resultWatcher: vscode.FileSystemWatcher | undefined;
+  const sourceWatcher = vscode.workspace.createFileSystemWatcher('**/*.{spec,test}.{ts,tsx,js,jsx,mjs,cjs}');
+  const configWatcher = vscode.workspace.createFileSystemWatcher('**/playwright.config.{ts,js,mjs,cjs,cts,mts}');
 
   const recreateResultWatcher = () => {
     resultWatcher?.dispose();
@@ -76,18 +98,29 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
       || event.affectsConfiguration('playwrightTraceViewer.testResultGlob')
       || event.affectsConfiguration('playwrightTraceViewer.testGlob')
       || event.affectsConfiguration('playwrightTraceViewer.testExcludeGlobs')
+      || event.affectsConfiguration('playwrightTraceViewer.testExplorerViewMode')
     ) {
       recreateResultWatcher();
       provider.refresh();
     }
   });
 
+  sourceWatcher.onDidCreate(() => provider.refresh());
+  sourceWatcher.onDidChange(() => provider.refresh());
+  sourceWatcher.onDidDelete(() => provider.refresh());
+  configWatcher.onDidCreate(() => provider.refresh());
+  configWatcher.onDidChange(() => provider.refresh());
+  configWatcher.onDidDelete(() => provider.refresh());
+
   context.subscriptions.push(
     treeView,
     configurationWatcher,
     { dispose: () => resultWatcher?.dispose() },
+    sourceWatcher,
+    configWatcher,
     vscode.commands.registerCommand('playwrightTraceViewer.refreshTests', () => provider.refresh()),
     vscode.commands.registerCommand('playwrightTraceViewer.searchTests', () => provider.search()),
+    vscode.commands.registerCommand('playwrightTraceViewer.selectTestExplorerViewMode', () => provider.selectViewMode()),
     vscode.commands.registerCommand('playwrightTraceViewer.installDependencies', () => {
       installDependencies();
       provider.refresh();
@@ -103,13 +136,15 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
 class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
   private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<TestNode | undefined>();
   readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
-  private nodes: FolderNode[] | undefined;
+  private nodes: TestNode[] | undefined;
   private results: ResultFileNode[] | undefined;
-  private fileNameFilter = '';
+  private discovery: PlaywrightDiscoveryResult | undefined;
+  private searchFilter = '';
 
   refresh(): void {
     this.nodes = undefined;
     this.results = undefined;
+    this.discovery = undefined;
     this.onDidChangeTreeDataEmitter.fire(undefined);
   }
 
@@ -120,24 +155,72 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
   }
 
   async search(): Promise<void> {
+    const viewMode = getViewMode();
+    const title = viewMode === 'test' ? 'Search Playwright tests' : 'Search Playwright test files';
+    const prompt = viewMode === 'test'
+      ? 'Type a test title, describe title, or file path. Leave empty to clear the filter.'
+      : 'Type a file or folder name. Leave empty to clear the filter.';
+    const placeHolder = viewMode === 'test'
+      ? 'checkout, smoke › mobile, tests/auth.spec.ts'
+      : 'login, dashboard, tests/auth';
     const value = await vscode.window.showInputBox({
-      title: 'Search Playwright test files',
-      prompt: 'Type a file or folder name. Leave empty to clear the filter.',
-      value: this.fileNameFilter,
-      placeHolder: 'login, dashboard, tests/auth'
+      title,
+      prompt,
+      value: this.searchFilter,
+      placeHolder
     });
 
     if (value === undefined) {
       return;
     }
 
-    this.fileNameFilter = value.trim().toLowerCase();
+    this.searchFilter = value.trim().toLowerCase();
+    this.nodes = undefined;
+    this.onDidChangeTreeDataEmitter.fire(undefined);
+  }
+
+  async selectViewMode(): Promise<void> {
+    const currentMode = getViewMode();
+    const selected = await vscode.window.showQuickPick([
+      {
+        label: 'View by Test Name',
+        description: 'Use describe hierarchy and test() titles',
+        mode: 'test' as const,
+        picked: currentMode === 'test'
+      },
+      {
+        label: 'View by File Name',
+        description: 'Use folders and test file paths',
+        mode: 'file' as const,
+        picked: currentMode === 'file'
+      }
+    ], {
+      title: 'Change Test Explorer View',
+      placeHolder: 'Choose how tests are shown'
+    });
+
+    if (!selected || selected.mode === currentMode) {
+      return;
+    }
+
+    await vscode.workspace
+      .getConfiguration('playwrightTraceViewer')
+      .update('testExplorerViewMode', selected.mode, vscode.ConfigurationTarget.Workspace);
+    this.searchFilter = '';
     this.refresh();
   }
 
   async getChildren(element?: TestNode): Promise<TestNode[]> {
     if (element?.type === 'folder') {
       return element.files;
+    }
+
+    if (element?.type === 'suite') {
+      return element.children;
+    }
+
+    if (element?.type === 'test') {
+      return element.results;
     }
 
     if (element?.type === 'file') {
@@ -148,28 +231,40 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
       return [];
     }
 
-    if (!this.results) {
-      this.results = await discoverResults();
-    }
-
     if (!this.nodes) {
-      this.nodes = await discoverTests(this.fileNameFilter, this.results);
+      this.nodes = await this.discoverNodes();
     }
 
-    const installNode = await getInstallNode();
-    return installNode ? [installNode, ...this.nodes] : this.nodes;
+    return this.nodes;
   }
 
   getTreeItem(element: TestNode): vscode.TreeItem {
-    if (element.type === 'install') {
-      const item = new vscode.TreeItem('Install Dependencies', vscode.TreeItemCollapsibleState.None);
-      item.description = element.packageManager;
-      item.contextValue = 'playwrightInstallDependencies';
-      item.iconPath = new vscode.ThemeIcon('cloud-download');
-      item.tooltip = `Run ${element.packageManager} install in this workspace`;
+    if (element.type === 'suite') {
+      const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
+      item.contextValue = 'playwrightTestSuite';
+      item.iconPath = new vscode.ThemeIcon('symbol-namespace');
+      item.tooltip = element.titlePath.join(' › ');
+      return item;
+    }
+
+    if (element.type === 'test') {
+      const item = new vscode.TreeItem(
+        element.label,
+        element.results.length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
+      );
+      item.description = `${path.basename(element.relativePath)}:${element.line}`;
+      item.contextValue = 'playwrightTestCase';
+      item.iconPath = new vscode.ThemeIcon('beaker');
+      item.resourceUri = element.uri;
+      item.tooltip = [
+        element.titlePath.join(' › '),
+        `${element.relativePath}:${element.line}`,
+        element.projectName ? `Project: ${element.projectName}` : undefined
+      ].filter(Boolean).join('\n');
       item.command = {
-        command: 'playwrightTraceViewer.installDependencies',
-        title: 'Install Dependencies'
+        command: 'playwrightTraceViewer.openTestFile',
+        title: 'Open Test File',
+        arguments: [element]
       };
       return item;
     }
@@ -214,26 +309,424 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     };
     return item;
   }
+
+  private async discoverNodes(): Promise<TestNode[]> {
+    if (!this.results) {
+      this.results = await discoverResults();
+    }
+
+    const viewMode = getViewMode();
+
+    if (viewMode === 'file') {
+      return discoverFileView(this.searchFilter, this.results);
+    }
+
+    this.discovery ??= await discoverPlaywrightTests();
+    if (this.discovery.error) {
+      vscode.window.showWarningMessage(`${this.discovery.error} Showing file name view instead.`);
+      return discoverFileView(this.searchFilter, this.results);
+    }
+
+    const tests = attachResultsToTests(this.discovery.tests, this.results);
+    const nodes: TestNode[] = buildTestView(tests, this.searchFilter);
+    const vitestNodes = await discoverFileView(this.searchFilter, [], new Set<TestFramework>(['vitest']));
+    nodes.push(...vitestNodes);
+    if (nodes.length > 0 || this.searchFilter) {
+      return nodes;
+    }
+
+    return discoverFileView(this.searchFilter, this.results);
+  }
 }
 
-async function getInstallNode(): Promise<InstallNode | undefined> {
+type PlaywrightDiscoveryResult = {
+  tests: TestCaseNode[];
+  error?: string;
+};
+
+type JsonObject = Record<string, unknown>;
+
+type PlaywrightDiscoveryContext = {
+  projectNames: Map<string, string>;
+  testDirs: string[];
+};
+
+async function discoverPlaywrightTests(): Promise<PlaywrightDiscoveryResult> {
   const workspaceRoot = getWorkspaceRoot();
 
-  if (!workspaceRoot || !(await pathExists(path.join(workspaceRoot, 'package.json')))) {
+  if (!workspaceRoot) {
+    return { tests: [] };
+  }
+
+  const output = vscode.window.createOutputChannel(outputChannelName);
+  const playwrightArgs = ['test', '--list', '--reporter=json'];
+  const command = await resolvePlaywrightCommand(workspaceRoot, playwrightArgs);
+
+  output.appendLine(`$ ${command.runner} ${command.args.map(quoteShellArg).join(' ')}`);
+
+  const result = await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: 'Discovering Playwright tests',
+    cancellable: false
+  }, () => runDiscoveryProcess(workspaceRoot, command.runner, command.args, output));
+
+  if (result.exitCode !== 0) {
+    output.show(true);
+    return { tests: [], error: `Playwright test discovery failed with exit code ${result.exitCode}.` };
+  }
+
+  const jsonText = extractJsonObject(result.stdout);
+  if (!jsonText) {
+    output.show(true);
+    output.appendLine('Could not find JSON reporter output in Playwright --list output.');
+    return { tests: [], error: 'Playwright test discovery did not produce JSON output.' };
+  }
+
+  try {
+    return { tests: parsePlaywrightJsonReport(JSON.parse(jsonText), workspaceRoot) };
+  } catch (error) {
+    output.show(true);
+    output.appendLine(`Failed to parse Playwright JSON reporter output: ${String(error)}`);
+    return { tests: [], error: 'Playwright test discovery output could not be parsed.' };
+  }
+}
+
+function runDiscoveryProcess(
+  cwd: string,
+  runner: string,
+  args: string[],
+  output: vscode.OutputChannel
+): Promise<{ exitCode: number; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(runner, args, { cwd });
+    let stdout = '';
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const value = chunk.toString();
+      stdout += value;
+      output.append(value);
+    });
+    child.stderr.on('data', (chunk: Buffer) => output.append(chunk.toString()));
+    child.on('error', (error) => {
+      output.appendLine(`Failed to run Playwright discovery: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to run Playwright discovery: ${error.message}`);
+      resolve({ exitCode: 1, stdout });
+    });
+    child.on('close', (code) => resolve({ exitCode: code ?? 1, stdout }));
+  });
+}
+
+function parsePlaywrightJsonReport(report: unknown, workspaceRoot: string): TestCaseNode[] {
+  if (!isJsonObject(report)) {
+    return [];
+  }
+
+  const context = getDiscoveryContext(report.config);
+  const suites = Array.isArray(report.suites) ? report.suites : [];
+
+  return suites.flatMap((suite) => collectSuiteTests(suite, [], workspaceRoot, context));
+}
+
+function collectSuiteTests(
+  suite: unknown,
+  parentTitles: string[],
+  workspaceRoot: string,
+  context: PlaywrightDiscoveryContext
+): TestCaseNode[] {
+  if (!isJsonObject(suite)) {
+    return [];
+  }
+
+  const suiteTitle = shouldIncludeSuiteTitle(suite) ? suite.title as string : undefined;
+  const suiteTitles = suiteTitle ? [...parentTitles, suiteTitle] : parentTitles;
+  const children: TestCaseNode[] = [];
+
+  if (Array.isArray(suite.specs)) {
+    for (const spec of suite.specs) {
+      children.push(...collectSpecTests(spec, suiteTitles, workspaceRoot, context));
+    }
+  }
+
+  if (Array.isArray(suite.suites)) {
+    for (const childSuite of suite.suites) {
+      children.push(...collectSuiteTests(childSuite, suiteTitles, workspaceRoot, context));
+    }
+  }
+
+  return children;
+}
+
+function shouldIncludeSuiteTitle(suite: JsonObject): boolean {
+  return typeof suite.title === 'string'
+    && suite.title.length > 0
+    && (typeof suite.line !== 'number' || suite.line > 0);
+}
+
+function collectSpecTests(
+  spec: unknown,
+  parentTitles: string[],
+  workspaceRoot: string,
+  context: PlaywrightDiscoveryContext
+): TestCaseNode[] {
+  if (!isJsonObject(spec)) {
+    return [];
+  }
+
+  const specTitle = typeof spec.title === 'string' ? spec.title : 'Unnamed test';
+  const titlePath = [...parentTitles, specTitle];
+  const location = getLocation(spec);
+  const file = location.file;
+
+  if (!file) {
+    return [];
+  }
+
+  const absolutePath = resolveDiscoveredFilePath(file, workspaceRoot, context.testDirs);
+  const relativePath = normalizeRelativePath(path.relative(workspaceRoot, absolutePath));
+  const uri = vscode.Uri.file(absolutePath);
+  const tests = Array.isArray(spec.tests) && spec.tests.length > 0 ? spec.tests : [undefined];
+
+  return tests.map((test) => ({
+    type: 'test' as const,
+    label: specTitle,
+    titlePath,
+    relativePath,
+    line: location.line,
+    column: location.column,
+    projectName: getProjectName(test, context.projectNames),
+    framework: 'playwright' as const,
+    uri,
+    results: []
+  }));
+}
+
+function getProjectName(test: unknown, projectNames: Map<string, string>): string | undefined {
+  if (!isJsonObject(test)) {
     return undefined;
   }
 
-  if (await pathExists(path.join(workspaceRoot, 'node_modules'))) {
-    return undefined;
+  if (typeof test.projectName === 'string') {
+    return test.projectName;
   }
 
+  if (typeof test.projectId === 'string') {
+    return projectNames.get(test.projectId) ?? test.projectId;
+  }
+
+  return undefined;
+}
+
+function getDiscoveryContext(config: unknown): PlaywrightDiscoveryContext {
+  const projectNames = new Map<string, string>();
+  const testDirs = new Set<string>();
+
+  if (!isJsonObject(config) || !Array.isArray(config.projects)) {
+    return { projectNames, testDirs: [] };
+  }
+
+  for (const project of config.projects) {
+    if (!isJsonObject(project)) {
+      continue;
+    }
+
+    const id = typeof project.id === 'string' ? project.id : undefined;
+    const name = typeof project.name === 'string' ? project.name : id;
+
+    if (id && name) {
+      projectNames.set(id, name);
+    }
+
+    if (typeof project.testDir === 'string') {
+      testDirs.add(project.testDir);
+    }
+  }
+
+  return { projectNames, testDirs: [...testDirs] };
+}
+
+function resolveDiscoveredFilePath(file: string, workspaceRoot: string, testDirs: string[]): string {
+  if (path.isAbsolute(file)) {
+    return file;
+  }
+
+  for (const testDir of testDirs) {
+    const candidate = path.join(testDir, file);
+    if (path.isAbsolute(testDir) && syncFs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  const workspaceCandidate = path.join(workspaceRoot, file);
+  if (syncFs.existsSync(workspaceCandidate)) {
+    return workspaceCandidate;
+  }
+
+  const firstAbsoluteTestDir = testDirs.find((testDir) => path.isAbsolute(testDir));
+  if (firstAbsoluteTestDir) {
+    return path.join(firstAbsoluteTestDir, file);
+  }
+
+  return workspaceCandidate;
+}
+
+function getLocation(value: JsonObject): { file: string; line: number; column: number } {
+  const location = isJsonObject(value.location) ? value.location : value;
   return {
-    type: 'install',
-    packageManager: await detectPackageManager(workspaceRoot)
+    file: typeof location.file === 'string' ? location.file : '',
+    line: typeof location.line === 'number' ? location.line : 1,
+    column: typeof location.column === 'number' ? location.column : 1
   };
 }
 
-async function discoverTests(fileNameFilter: string, resultFiles: ResultFileNode[]): Promise<FolderNode[]> {
+function buildTestView(tests: TestCaseNode[], searchFilter: string): Array<TestSuiteNode | TestCaseNode> {
+  const filteredTests = searchFilter
+    ? tests.filter((test) => doesTestMatchFilter(test, searchFilter))
+    : tests;
+  const roots: Array<TestSuiteNode | TestCaseNode> = [];
+
+  for (const test of filteredTests) {
+    const suiteTitles = [
+      ...getFolderTitlePath(test.relativePath),
+      ...test.titlePath.slice(0, -1)
+    ];
+
+    if (suiteTitles.length === 0) {
+      roots.push(test);
+      continue;
+    }
+
+    let siblings: Array<TestSuiteNode | TestCaseNode> = roots;
+    const suitePath: string[] = [];
+
+    for (const suiteTitle of suiteTitles) {
+      suitePath.push(suiteTitle);
+      let suite = siblings.find((child): child is TestSuiteNode => {
+        return child.type === 'suite' && child.titlePath.join('\0') === suitePath.join('\0');
+      });
+
+      if (!suite) {
+        suite = { type: 'suite', label: suiteTitle, titlePath: [...suitePath], children: [] };
+        siblings.push(suite);
+      }
+
+      siblings = suite.children;
+    }
+
+    siblings.push(test);
+  }
+
+  return sortSuitesAndTests(roots);
+}
+
+function getFolderTitlePath(relativePath: string): string[] {
+  const folder = path.dirname(relativePath).replace(/\\/g, '/');
+
+  if (!folder || folder === '.') {
+    return [];
+  }
+
+  return [`[${folder}]`];
+}
+
+function attachResultsToTests(tests: TestCaseNode[], resultFiles: ResultFileNode[]): TestCaseNode[] {
+  const testRelativePaths = [...new Set(tests.map((test) => test.relativePath))];
+
+  return tests.map((test) => ({
+    ...test,
+    results: getChildResults(matchResultsToTestCase(test, resultFiles, testRelativePaths))
+  }));
+}
+
+function matchResultsToTestCase(
+  test: TestCaseNode,
+  resultFiles: ResultFileNode[],
+  testRelativePaths: string[]
+): ResultFileNode[] {
+  const sourceMatches = matchResultsToTestFile(test.relativePath, resultFiles, testRelativePaths);
+  const titleSlug = slugify(test.label);
+  const titlePathSlug = slugify(test.titlePath.join('-'));
+
+  if (!titleSlug) {
+    return [];
+  }
+
+  return sourceMatches.filter((result) => {
+    const resultSlug = canonicalizeResultDirName(path.basename(result.resultDirRelativePath));
+    return resultSlug.includes(titleSlug) || (!!titlePathSlug && resultSlug.includes(titlePathSlug));
+  });
+}
+
+function sortSuitesAndTests<T extends TestSuiteNode | TestCaseNode>(nodes: T[]): T[] {
+  nodes.sort((a, b) => a.label.localeCompare(b.label));
+  for (const node of nodes) {
+    if (node.type === 'suite') {
+      node.children = sortSuitesAndTests(node.children);
+    }
+  }
+  return nodes;
+}
+
+function doesTestMatchFilter(test: TestCaseNode, filter: string): boolean {
+  return [
+    test.label,
+    test.titlePath.join(' '),
+    test.titlePath.join(' › '),
+    test.relativePath,
+    path.basename(test.relativePath)
+  ].some((value) => value.toLowerCase().includes(filter));
+}
+
+function extractJsonObject(output: string): string | undefined {
+  const start = output.indexOf('{');
+
+  if (start === -1) {
+    return undefined;
+  }
+
+  for (let end = output.length - 1; end >= start; end -= 1) {
+    if (output[end] !== '}') {
+      continue;
+    }
+
+    const candidate = output.slice(start, end + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Keep looking for the matching end brace.
+    }
+  }
+
+  return undefined;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getViewMode(): TestExplorerViewMode {
+  return vscode.workspace
+    .getConfiguration('playwrightTraceViewer')
+    .get<TestExplorerViewMode>('testExplorerViewMode', 'test');
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.replace(/\\/g, '/');
+}
+
+function quoteShellArg(value: string): string {
+  if (/^[A-Za-z0-9_/:=@%+.,~-]+$/.test(value)) {
+    return value;
+  }
+
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function discoverFileView(
+  fileNameFilter: string,
+  resultFiles: ResultFileNode[],
+  frameworks?: Set<TestFramework>
+): Promise<FolderNode[]> {
   const workspaceRoot = getWorkspaceRoot();
 
   if (!workspaceRoot) {
@@ -241,7 +734,8 @@ async function discoverTests(fileNameFilter: string, resultFiles: ResultFileNode
   }
 
   const files = await vscode.workspace.findFiles(getTestGlob(), getExcludeGlob());
-  const testFiles = await filterTestFiles(files);
+  const testFiles = (await filterTestFiles(files))
+    .filter((file) => !frameworks || frameworks.has(file.framework));
   const filteredTestFiles = fileNameFilter
     ? testFiles.filter((file) => {
       const relativePath = path.relative(workspaceRoot, file.uri.fsPath).toLowerCase();
@@ -284,16 +778,10 @@ async function discoverTests(fileNameFilter: string, resultFiles: ResultFileNode
   const unmatchedResults = resultFiles.filter((result) => !matchedResultPaths.has(result.uri.fsPath));
 
   if (!fileNameFilter && unmatchedResults.length > 0) {
-    nodes.push({
-      type: 'folder',
-      label: 'Test Results',
-      relativePath: 'test-results',
-      files: unmatchedResults.map((result) => ({
-        ...result,
-        label: getStandaloneResultLabel(result)
-      })),
-      resultOnly: true
-    });
+    const resultNode = getTestResultsFolder(unmatchedResults);
+    if (resultNode) {
+      nodes.push(resultNode);
+    }
   }
 
   return nodes;
@@ -313,6 +801,23 @@ function compareTestExplorerItems(a: FileNode | ResultFileNode, b: FileNode | Re
   }
 
   return a.label.localeCompare(b.label);
+}
+
+function getTestResultsFolder(resultFiles: ResultFileNode[]): FolderNode | undefined {
+  if (resultFiles.length === 0) {
+    return undefined;
+  }
+
+  return {
+    type: 'folder',
+    label: 'Test Results',
+    relativePath: 'test-results',
+    files: resultFiles.map((result) => ({
+      ...result,
+      label: getStandaloneResultLabel(result)
+    })),
+    resultOnly: true
+  };
 }
 
 function getChildResults(results: ResultFileNode[]): ResultFileNode[] {
@@ -698,13 +1203,19 @@ function getEnabledExcludePatterns(settingName: 'search.exclude' | 'files.exclud
     .map(([pattern]) => pattern);
 }
 
-async function openTestFile(node?: FileNode): Promise<void> {
-  if (!node || node.type !== 'file') {
+async function openTestFile(node?: FileNode | TestCaseNode): Promise<void> {
+  if (!node || (node.type !== 'file' && node.type !== 'test')) {
     return;
   }
 
   const document = await vscode.workspace.openTextDocument(node.uri);
-  await vscode.window.showTextDocument(document);
+  const editor = await vscode.window.showTextDocument(document);
+
+  if (node.type === 'test') {
+    const position = new vscode.Position(Math.max(node.line - 1, 0), Math.max(node.column - 1, 0));
+    editor.selection = new vscode.Selection(position, position);
+    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+  }
 }
 
 async function openResultFile(node?: ResultFileNode): Promise<void> {
@@ -721,11 +1232,12 @@ async function openResultFile(node?: ResultFileNode): Promise<void> {
 }
 
 async function copyTestPath(node?: TestNode): Promise<void> {
-  if (!node || (node.type !== 'file' && node.type !== 'resultFile')) {
+  if (!node || (node.type !== 'file' && node.type !== 'test' && node.type !== 'resultFile')) {
     return;
   }
 
-  await vscode.env.clipboard.writeText(node.uri.fsPath);
+  const suffix = node.type === 'test' ? `:${node.line}` : '';
+  await vscode.env.clipboard.writeText(`${node.uri.fsPath}${suffix}`);
 }
 
 function getResultFileIcon(relativePath: string): vscode.ThemeIcon {
@@ -786,7 +1298,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 async function runTests(provider: PlaywrightTestProvider, node?: TestNode): Promise<void> {
-  if (node && node.type !== 'file' && node.type !== 'folder') {
+  if (node && node.type !== 'file' && node.type !== 'folder' && node.type !== 'test' && node.type !== 'suite') {
     return;
   }
 
@@ -797,14 +1309,15 @@ async function runTests(provider: PlaywrightTestProvider, node?: TestNode): Prom
     return;
   }
 
-  if (node?.type === 'file') {
+  if (node?.type === 'file' || node?.type === 'test') {
     const group = await getTestRunGroup(workspaceRoot, node);
     await runTestFramework(group.cwd, group.framework, group.testPaths, provider);
     return;
   }
 
-  if (node?.type === 'folder') {
-    const groups = await groupTestFilesByProject(workspaceRoot, node.files);
+  if (node?.type === 'folder' || node?.type === 'suite') {
+    const targets = node.type === 'folder' ? node.files : flattenSuiteTests(node);
+    const groups = await groupTestFilesByProject(workspaceRoot, targets);
     await runGroupedTests(groups, provider);
     return;
   }
@@ -861,12 +1374,17 @@ async function groupTestFilesByProject(
 
 async function getTestRunGroup(workspaceRoot: string, file: TestFileTarget): Promise<TestRunGroup> {
   const cwd = await findNearestPackageRoot(path.dirname(file.uri.fsPath), workspaceRoot);
+  const relativePath = normalizeRelativePath(path.relative(cwd, file.uri.fsPath));
 
   return {
     cwd,
     framework: file.framework,
-    testPaths: [path.relative(cwd, file.uri.fsPath)]
+    testPaths: [file.line ? `${relativePath}:${file.line}` : relativePath]
   };
+}
+
+function flattenSuiteTests(suite: TestSuiteNode): TestCaseNode[] {
+  return suite.children.flatMap((child) => child.type === 'test' ? [child] : flattenSuiteTests(child));
 }
 
 async function findNearestPackageRoot(startDir: string, workspaceRoot: string): Promise<string> {

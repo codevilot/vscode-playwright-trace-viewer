@@ -31,6 +31,7 @@
     "onCommand:playwrightTraceViewer.runTestsRetainTrace",
     "onCommand:playwrightTraceViewer.refreshTests",
     "onCommand:playwrightTraceViewer.searchTests",
+    "onCommand:playwrightTraceViewer.selectTestExplorerViewMode",
     "onCommand:playwrightTraceViewer.installDependencies",
     "onCommand:playwrightTraceViewer.runAllTestsFromExplorer",
     "onCommand:playwrightTraceViewer.runTestNode",
@@ -85,6 +86,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "playwrightTraceViewer.selectTestExplorerViewMode",
+        "title": "Playwright Trace Viewer: View Tests By",
+        "icon": "$(list-tree)"
+      },
+      {
         "command": "playwrightTraceViewer.installDependencies",
         "title": "Playwright Trace Viewer: Install Dependencies",
         "icon": "$(cloud-download)"
@@ -135,7 +141,7 @@
     "viewsWelcome": [
       {
         "view": "playwrightTraceViewer.tests",
-        "contents": "No Playwright or Vitest test files were found in the current workspace.\\n[Search](command:playwrightTraceViewer.searchTests)\\n[Install Dependencies](command:playwrightTraceViewer.installDependencies)\\n[Refresh](command:playwrightTraceViewer.refreshTests)"
+        "contents": "No Playwright or Vitest test files were found in the current workspace.\\n[Search](command:playwrightTraceViewer.searchTests)\\n[Refresh](command:playwrightTraceViewer.refreshTests)"
       }
     ],
     "configuration": {
@@ -163,6 +169,16 @@
           "type": "string",
           "default": "**/test-results/**/*",
           "description": "Glob used to show Playwright test result files in the Tests sidebar."
+        },
+        "playwrightTraceViewer.testExplorerViewMode": {
+          "type": "string",
+          "enum": [
+            "test",
+            "file"
+          ],
+          "default": "test",
+          "scope": "resource",
+          "description": "Controls whether the Tests sidebar is shown by Playwright test title or by file path."
         },
         "playwrightTraceViewer.packageRunner": {
           "type": "string",
@@ -200,40 +216,30 @@
       ],
       "view/title": [
         {
-          "command": "playwrightTraceViewer.searchTests",
+          "command": "playwrightTraceViewer.refreshTests",
           "when": "view == playwrightTraceViewer.tests",
           "group": "navigation@0"
         },
         {
-          "command": "playwrightTraceViewer.installDependencies",
+          "command": "playwrightTraceViewer.searchTests",
           "when": "view == playwrightTraceViewer.tests",
           "group": "navigation@1"
         },
         {
-          "command": "playwrightTraceViewer.runAllTestsFromExplorer",
+          "command": "playwrightTraceViewer.selectTestExplorerViewMode",
           "when": "view == playwrightTraceViewer.tests",
           "group": "navigation@2"
-        },
-        {
-          "command": "playwrightTraceViewer.refreshTests",
-          "when": "view == playwrightTraceViewer.tests",
-          "group": "navigation@3"
         }
       ],
       "view/item/context": [
         {
-          "command": "playwrightTraceViewer.installDependencies",
-          "when": "view == playwrightTraceViewer.tests && viewItem == playwrightInstallDependencies",
-          "group": "inline@1"
-        },
-        {
           "command": "playwrightTraceViewer.runTestNode",
-          "when": "view == playwrightTraceViewer.tests && viewItem =~ /playwrightTest(File|Folder)/",
+          "when": "view == playwrightTraceViewer.tests && viewItem =~ /playwrightTest(File|Folder|Case|Suite)/",
           "group": "inline@1"
         },
         {
           "command": "playwrightTraceViewer.openTestFile",
-          "when": "view == playwrightTraceViewer.tests && viewItem == playwrightTestFile",
+          "when": "view == playwrightTraceViewer.tests && viewItem =~ /playwrightTest(File|Case)/",
           "group": "inline@2"
         },
         {
@@ -243,7 +249,7 @@
         },
         {
           "command": "playwrightTraceViewer.copyTestPath",
-          "when": "view == playwrightTraceViewer.tests && viewItem =~ /playwright(Test|Result)File/",
+          "when": "view == playwrightTraceViewer.tests && viewItem =~ /playwright(TestFile|TestCase|ResultFile)/",
           "group": "2_workspace@1"
         }
       ]
