@@ -973,45 +973,9 @@ async function discoverResults(): Promise<ResultFileNode[]> {
       }
     })
   );
-  return getLatestResultDirs(getVisibleExtensionResultFiles(resultFiles
+  return getLatestResultDirs(resultFiles
     .filter((file): file is ResultFileNode => !!file)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.relativePath.localeCompare(b.relativePath))));
-}
-
-function getVisibleExtensionResultFiles(resultFiles: ResultFileNode[]): ResultFileNode[] {
-  const summaryDirs = new Set(
-    resultFiles
-      .filter((file) => {
-        const summaryDir = getExtensionRunSummaryDir(file.resultDirRelativePath);
-        return path.basename(file.relativePath) === 'trace.zip'
-          && !!summaryDir
-          && fileNormalizedPath(file.resultDirRelativePath) === summaryDir;
-      })
-      .map((file) => fileNormalizedPath(file.resultDirRelativePath))
-  );
-
-  return resultFiles.filter((file) => {
-    const summaryDir = getExtensionRunSummaryDir(file.resultDirRelativePath);
-
-    return !summaryDir
-      || fileNormalizedPath(file.resultDirRelativePath) === summaryDir
-      || !summaryDirs.has(summaryDir);
-  });
-}
-
-function fileNormalizedPath(relativePath: string): string {
-  return relativePath.replace(/\\/g, '/');
-}
-
-function getExtensionRunSummaryDir(relativePath: string): string | undefined {
-  const parts = fileNormalizedPath(relativePath).split('/');
-  const testResultsIndex = parts.indexOf('test-results');
-
-  if (testResultsIndex === -1 || parts.length <= testResultsIndex + 1) {
-    return undefined;
-  }
-
-  return parts.slice(0, testResultsIndex + 2).join('/');
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.relativePath.localeCompare(b.relativePath)));
 }
 
 function getLatestResultDirs(resultFiles: ResultFileNode[]): ResultFileNode[] {
