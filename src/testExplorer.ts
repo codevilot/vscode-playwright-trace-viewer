@@ -81,12 +81,22 @@ type RunTestsOptions = {
   openTrace?: boolean;
 };
 
+type WebviewTestNode = {
+  id: string;
+  type: TestNode['type'];
+  label: string;
+  icon: string;
+  meta?: string;
+  running: boolean;
+  canRun: boolean;
+  canOpen: boolean;
+  canCopy: boolean;
+  children: WebviewTestNode[];
+};
+
 export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext): void {
   const provider = new PlaywrightTestProvider();
-  const treeView = vscode.window.createTreeView('playwrightTraceViewer.tests', {
-    treeDataProvider: provider,
-    showCollapseAll: false
-  });
+  const webviewProvider = new PlaywrightTestWebviewProvider(context.extensionUri, provider);
   const refreshResults = () => provider.refreshResults();
   let resultWatcher: vscode.FileSystemWatcher | undefined;
   const sourceWatcher = vscode.workspace.createFileSystemWatcher('**/*.{spec,test}.{ts,tsx,js,jsx,mjs,cjs}');
@@ -124,7 +134,7 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
   configWatcher.onDidDelete(() => provider.refresh());
 
   context.subscriptions.push(
-    treeView,
+    vscode.window.registerWebviewViewProvider('playwrightTraceViewer.tests', webviewProvider),
     configurationWatcher,
     { dispose: () => resultWatcher?.dispose() },
     sourceWatcher,
@@ -206,6 +216,10 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
 
   hasSearchFilter(): boolean {
     return this.searchFilter.length > 0;
+  }
+
+  getSearchFilter(): string {
+    return this.searchFilter;
   }
 
   async getVisibleNodes(): Promise<TestNode[]> {
@@ -365,6 +379,10 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     this.onDidChangeTreeDataEmitter.fire(undefined);
   }
 
+  isNodeRunningForWebview(node: TestNode): boolean {
+    return this.isNodeRunning(node);
+  }
+
   private isNodeRunning(node: TestNode): boolean {
     if (node.type === 'file' || node.type === 'test') {
       return this.runningTargetKeys.has(getTestTargetKey(node));
@@ -407,6 +425,425 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     }
 
     return discoverFileView(this.searchFilter, this.results);
+  }
+}
+
+class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
+  private view: vscode.WebviewView | undefined;
+  private nodesById = new Map<string, TestNode>();
+
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly provider: PlaywrightTestProvider
+  ) {
+    this.provider.onDidChangeTreeData(() => this.refresh());
+  }
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.extensionUri]
+    };
+    view.webview.onDidReceiveMessage((message: { command?: string; id?: string; value?: string }) => {
+      void this.handleMessage(message);
+    });
+    void this.refresh();
+  }
+
+  private async handleMessage(message: { command?: string; id?: string; value?: string }): Promise<void> {
+    if (message.command === 'refresh') {
+      this.provider.refresh();
+      return;
+    }
+
+    if (message.command === 'search') {
+      await this.provider.setSearchFilter(message.value ?? '');
+      return;
+    }
+
+    if (message.command === 'viewMode') {
+      await this.provider.selectViewMode();
+      return;
+    }
+
+    const node = message.id ? this.nodesById.get(message.id) : undefined;
+
+    if (message.command === 'run') {
+      await runTests(this.provider, node);
+    } else if (message.command === 'open') {
+      if (node?.type === 'file' || node?.type === 'test') {
+        await openTestFile(node);
+      } else if (node?.type === 'resultFile') {
+        await openResultFile(node);
+      }
+    } else if (message.command === 'copy') {
+      await copyTestPath(node);
+    }
+  }
+
+  private async refresh(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    const nodes = await this.provider.getVisibleNodes();
+    this.nodesById = new Map<string, TestNode>();
+    const state = {
+      viewMode: getViewMode(),
+      searchFilter: this.provider.getSearchFilter(),
+      nodes: this.toWebviewNodes(nodes, [])
+    };
+    this.view.webview.html = this.getHtml(this.view.webview, state);
+  }
+
+  private toWebviewNodes(nodes: TestNode[], pathParts: number[]): WebviewTestNode[] {
+    return nodes.map((node, index) => {
+      const id = [...pathParts, index].join('.');
+      const children = this.getChildren(node);
+      this.nodesById.set(id, node);
+      return {
+        id,
+        type: node.type,
+        label: node.label,
+        icon: this.getIcon(node),
+        meta: this.getMeta(node),
+        running: this.provider.isNodeRunningForWebview(node),
+        canRun: node.type === 'file' || node.type === 'folder' || node.type === 'suite' || node.type === 'test',
+        canOpen: node.type === 'file' || node.type === 'test' || node.type === 'resultFile',
+        canCopy: node.type === 'file' || node.type === 'test' || node.type === 'resultFile',
+        children: this.toWebviewNodes(children, [...pathParts, index])
+      };
+    });
+  }
+
+  private getChildren(node: TestNode): TestNode[] {
+    if (node.type === 'folder') {
+      return node.files;
+    }
+    if (node.type === 'suite') {
+      return node.children;
+    }
+    if (node.type === 'file' || node.type === 'test') {
+      return node.results;
+    }
+    return [];
+  }
+
+  private getMeta(node: TestNode): string | undefined {
+    let meta: string | undefined;
+
+    if (node.type === 'test') {
+      meta = `${node.relativePath}:${node.line}`;
+    } else if (node.type === 'file') {
+      const directory = path.dirname(node.relativePath);
+      meta = [node.framework, directory === '.' ? undefined : directory].filter(Boolean).join(' · ');
+    } else if (node.type === 'folder') {
+      meta = `${node.files.length} ${node.files.length === 1 ? 'item' : 'items'}`;
+    } else if (node.type === 'resultFile') {
+      meta = node.resultDirRelativePath === node.label ? undefined : node.resultDirRelativePath;
+    } else {
+      meta = node.titlePath.slice(0, -1).join(' > ');
+    }
+
+    return this.getDistinctMeta(node.label, meta);
+  }
+
+  private getDistinctMeta(label: string, meta: string | undefined): string | undefined {
+    const normalizedMeta = meta?.trim();
+
+    if (!normalizedMeta || normalizedMeta === label) {
+      return undefined;
+    }
+
+    return normalizedMeta;
+  }
+
+  private getIcon(node: TestNode): string {
+    if (node.type === 'folder') {
+      return 'folder';
+    }
+    if (node.type === 'resultFile') {
+      return isTraceFilePath(node.relativePath) ? 'preview' : 'file';
+    }
+    if (node.type === 'suite') {
+      return 'suite';
+    }
+    if (node.type === 'file') {
+      return node.framework === 'vitest' ? 'vitest' : 'file';
+    }
+    return 'test';
+  }
+
+  private getHtml(webview: vscode.Webview, state: { viewMode: TestExplorerViewMode; searchFilter: string; nodes: WebviewTestNode[] }): string {
+    const nonce = getNonce();
+    const serializedState = JSON.stringify(state).replace(/</g, '\\u003c');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 0;
+      color: var(--vscode-foreground);
+      background: var(--vscode-sideBar-background);
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+    }
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 2px;
+      padding: 3px 8px;
+      background: var(--vscode-sideBar-background);
+      border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+    }
+    input {
+      min-width: 0;
+      height: 24px;
+      box-sizing: border-box;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, transparent);
+      padding: 2px 8px;
+      outline: none;
+    }
+    input:focus { border-color: var(--vscode-focusBorder); }
+    button {
+      height: 24px;
+      color: var(--vscode-button-secondaryForeground);
+      background: var(--vscode-button-secondaryBackground);
+      border: 0;
+      padding: 0 8px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .tree { padding: 1px 0 4px 0; }
+    .empty {
+      padding: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+    details {
+      margin: 0;
+      padding: 0;
+    }
+    summary {
+      display: block;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      cursor: default;
+    }
+    summary::-webkit-details-marker { display: none; }
+    .row {
+      display: grid;
+      grid-template-columns: 8px 14px 1fr auto;
+      gap: 1px;
+      align-items: start;
+      min-height: 20px;
+      padding: 1px 8px;
+      box-sizing: border-box;
+    }
+    .row:hover { background: var(--vscode-list-hoverBackground); }
+    .twisty {
+      display: inline-block;
+      color: var(--vscode-descriptionForeground);
+      line-height: 17px;
+      user-select: none;
+    }
+    details[open] > summary .twisty { transform: rotate(90deg); }
+    .icon {
+      width: 14px;
+      height: 17px;
+      color: var(--vscode-symbolIcon-classForeground, var(--vscode-foreground));
+      text-align: center;
+      line-height: 17px;
+      font-size: 12px;
+      user-select: none;
+    }
+    .folder .icon { color: var(--vscode-symbolIcon-folderForeground, var(--vscode-foreground)); }
+    .suite .icon { color: var(--vscode-symbolIcon-namespaceForeground, var(--vscode-foreground)); }
+    .test .icon { color: var(--vscode-testing-iconPassed, var(--vscode-foreground)); }
+    .file .icon { color: var(--vscode-symbolIcon-fileForeground, var(--vscode-foreground)); }
+    .resultFile .icon { color: var(--vscode-charts-blue, var(--vscode-foreground)); }
+    .content {
+      min-width: 0;
+      line-height: 16px;
+      padding-top: 0;
+    }
+    .label {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+    .folder > .icon + .content .label,
+    .suite > .icon + .content .label {
+      font-weight: 600;
+    }
+    .meta {
+      color: var(--vscode-descriptionForeground);
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: normal;
+      font-size: 0.92em;
+      margin-top: 0;
+    }
+    .actions {
+      display: flex;
+      gap: 0;
+      visibility: hidden;
+      padding-top: 0;
+    }
+    .row:hover .actions,
+    .row:focus-within .actions {
+      visibility: visible;
+    }
+    .action {
+      width: 18px;
+      height: 20px;
+      padding: 0;
+      border-radius: 3px;
+    }
+    .children {
+      margin-left: 2px;
+      padding-left: 2px;
+      border-left: 1px solid var(--vscode-tree-indentGuidesStroke);
+    }
+    .running .label {
+      color: var(--vscode-testing-iconQueued);
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="${state.viewMode === 'test' ? 'Search tests' : 'Search files'}" aria-label="Search">
+    <button id="viewMode" title="Change view mode">${state.viewMode === 'test' ? 'Test' : 'File'}</button>
+    <button id="refresh" title="Refresh">Refresh</button>
+  </div>
+  <main id="tree" class="tree"></main>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    const state = ${serializedState};
+    const tree = document.getElementById('tree');
+    const search = document.getElementById('search');
+    search.value = state.searchFilter;
+    const renderText = value => String(value ?? '');
+    const icons = {
+      folder: '▣',
+      suite: '◇',
+      test: '✓',
+      file: '▤',
+      vitest: 'V',
+      preview: '◉'
+    };
+
+    function post(command, id, value) {
+      vscode.postMessage({ command, id, value });
+    }
+
+    function createAction(label, title, command, id) {
+      const button = document.createElement('button');
+      button.className = 'action';
+      button.type = 'button';
+      button.textContent = label;
+      button.title = title;
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        post(command, id);
+      });
+      return button;
+    }
+
+    function renderNode(node) {
+      const hasChildren = node.children.length > 0;
+      const wrapper = document.createElement(hasChildren ? 'details' : 'div');
+      if (hasChildren) {
+        wrapper.open = true;
+      }
+
+      const rowParent = hasChildren ? document.createElement('summary') : wrapper;
+      const row = document.createElement('div');
+      row.className = 'row ' + node.type + (node.running ? ' running' : '');
+      row.title = [node.label, node.meta].filter(Boolean).join('\\n');
+
+      const twisty = document.createElement('span');
+      twisty.className = 'twisty';
+      twisty.textContent = hasChildren ? '›' : '';
+      row.appendChild(twisty);
+
+      const icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.textContent = icons[node.icon] || '•';
+      row.appendChild(icon);
+
+      const content = document.createElement('span');
+      content.className = 'content';
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = renderText(node.label);
+      content.appendChild(label);
+      if (node.meta) {
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = renderText(node.meta);
+        content.appendChild(meta);
+      }
+      row.appendChild(content);
+
+      const actions = document.createElement('span');
+      actions.className = 'actions';
+      if (node.canRun) {
+        actions.appendChild(createAction('▶', 'Run', 'run', node.id));
+      }
+      if (node.canOpen) {
+        actions.appendChild(createAction('↗', 'Open', 'open', node.id));
+      }
+      if (node.canCopy) {
+        actions.appendChild(createAction('⧉', 'Copy path', 'copy', node.id));
+      }
+      row.appendChild(actions);
+
+      rowParent.appendChild(row);
+      if (hasChildren) {
+        wrapper.appendChild(rowParent);
+        const children = document.createElement('div');
+        children.className = 'children';
+        node.children.forEach(child => children.appendChild(renderNode(child)));
+        wrapper.appendChild(children);
+      }
+
+      return wrapper;
+    }
+
+    if (state.nodes.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'No tests found.';
+      tree.appendChild(empty);
+    } else {
+      state.nodes.forEach(node => tree.appendChild(renderNode(node)));
+    }
+
+    let searchTimer;
+    search.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => post('search', undefined, search.value), 200);
+    });
+    document.getElementById('viewMode').addEventListener('click', () => post('viewMode'));
+    document.getElementById('refresh').addEventListener('click', () => post('refresh'));
+  </script>
+</body>
+</html>`;
   }
 }
 
@@ -834,6 +1271,17 @@ function quoteShellArg(value: string): string {
   }
 
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function getNonce(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let nonce = '';
+
+  for (let i = 0; i < 32; i += 1) {
+    nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  return nonce;
 }
 
 async function discoverFileView(
