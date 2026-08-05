@@ -2,7 +2,7 @@
   "name": "playwright-trace-viewer",
   "displayName": "Playwright Trace Viewer",
   "description": "A lightweight helper for opening Playwright trace.zip files from VS Code.",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "publisher": "codevilot",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -34,6 +34,7 @@
     "onCommand:playwrightTraceViewer.selectTestExplorerViewMode",
     "onCommand:playwrightTraceViewer.installDependencies",
     "onCommand:playwrightTraceViewer.runAllTestsFromExplorer",
+    "onCommand:playwrightTraceViewer.runTests",
     "onCommand:playwrightTraceViewer.runTestNode",
     "onCommand:playwrightTraceViewer.openTestFile",
     "onCommand:playwrightTraceViewer.openResultFile",
@@ -99,6 +100,10 @@
         "command": "playwrightTraceViewer.runAllTestsFromExplorer",
         "title": "Playwright Trace Viewer: Run All Tests",
         "icon": "$(run-all)"
+      },
+      {
+        "command": "playwrightTraceViewer.runTests",
+        "title": "Playwright Trace Viewer: Run Tests"
       },
       {
         "command": "playwrightTraceViewer.runTestNode",

@@ -111,6 +111,8 @@ npx playwright test e2e/bronze-data-lifecycle.spec.ts --trace on
 
 Use the view selector in the Tests toolbar to switch between `View by Test Name` and `View by File Name`. Search works inside the selected mode: test mode searches titles, describe titles, title paths, and file paths; file mode searches file and folder paths.
 
+Running tests from the Tests sidebar honors the active search filter. When a filter is active, `Run All Tests` runs only the nodes still visible in the sidebar. Visible Playwright targets in the same project are executed in one Playwright process, so project `webServer` setup runs once while Playwright can still continue after individual test failures.
+
 Test-name discovery uses Playwright's own test listing command and loads the workspace Playwright configuration. If discovery fails or Playwright is not installed in the workspace, the sidebar falls back to the file-name view and writes the command output to the Playwright Trace Viewer output channel.
 
 ## Commands
@@ -120,6 +122,17 @@ Test-name discovery uses Playwright's own test listing command and loads the wor
 - Playwright Trace Viewer: Open Report
 - Playwright Trace Viewer: Run Tests with Trace
 - Playwright Trace Viewer: Run Tests Retain Trace on Failure
+- Playwright Trace Viewer: Run Tests
+
+Automation can call `playwrightTraceViewer.runTests` with an optional argument:
+
+```ts
+await vscode.commands.executeCommand('playwrightTraceViewer.runTests', {
+  filter: 'checkout',
+  continueOnFailure: true,
+  openTrace: false
+});
+```
 
 ## Settings
 

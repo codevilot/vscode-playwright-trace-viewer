@@ -13,22 +13,35 @@ import {
 const terminalName = 'Playwright Trace Viewer';
 export const outputChannelName = 'Playwright Trace Viewer';
 
+export type RunTestsWithTraceResult = {
+  tracePath?: string;
+  exitCode: number;
+};
+
 export async function runTestsWithTrace(
   workspaceRoot: string,
   traceMode: 'on' | 'retain-on-failure',
   testPaths: string[] = []
 ): Promise<string | undefined> {
+  return (await runTestsWithTraceDetailed(workspaceRoot, traceMode, testPaths)).tracePath;
+}
+
+export async function runTestsWithTraceDetailed(
+  workspaceRoot: string,
+  traceMode: 'on' | 'retain-on-failure',
+  testPaths: string[] = []
+): Promise<RunTestsWithTraceResult> {
   const outputDir = getPlaywrightOutputDir(testPaths);
-  const latestTracePath = await runPlaywrightInExtension(workspaceRoot, [
+  return runPlaywrightInExtension(workspaceRoot, [
     'test',
     ...testPaths,
     '--trace',
     traceMode,
+    '--max-failures',
+    '0',
     '--output',
     outputDir
   ], outputDir);
-
-  return latestTracePath;
 }
 
 export function runInTerminal(cwd: string, args: string[]): void {
@@ -53,7 +66,7 @@ async function runPlaywrightInExtension(
   cwd: string,
   playwrightArgs: string[],
   outputDir: string
-): Promise<string | undefined> {
+): Promise<RunTestsWithTraceResult> {
   const output = vscode.window.createOutputChannel(outputChannelName);
   const command = await resolvePlaywrightCommand(cwd, playwrightArgs);
   const startedAt = Date.now();
@@ -74,13 +87,14 @@ async function runPlaywrightInExtension(
 
   const latestTrace = await findLatestTrace(path.resolve(cwd, outputDir), startedAt);
   if (!latestTrace) {
-    return undefined;
+    return { exitCode };
   }
 
-  return copyLatestTrace(latestTrace, [
+  const tracePath = await copyLatestTrace(latestTrace, [
     path.resolve(cwd, outputDir, 'trace.zip'),
     path.resolve(cwd, 'test-results', 'latest', getLatestTraceFileName(outputDir))
   ]);
+  return { tracePath, exitCode };
 }
 
 function runProcess(

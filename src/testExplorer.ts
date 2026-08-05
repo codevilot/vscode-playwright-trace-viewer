@@ -4,7 +4,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot, isTraceFilePath } from './trace';
-import { outputChannelName, resolvePlaywrightCommand, runInTerminal, runTestsWithTrace } from './terminal';
+import { outputChannelName, resolvePlaywrightCommand, runInTerminal, runTestsWithTraceDetailed } from './terminal';
 import { findNearestWorkingDirectory, getWorkingDirectory } from './workspace/workingDirectory';
 
 type TestNode = FolderNode | FileNode | ResultFileNode | TestSuiteNode | TestCaseNode;
@@ -70,6 +70,13 @@ type TestRunGroup = {
   cwd: string;
   framework: TestFramework;
   testPaths: string[];
+  targets: TestFileTarget[];
+};
+
+type RunTestsOptions = {
+  filter?: string;
+  continueOnFailure?: boolean;
+  openTrace?: boolean;
 };
 
 export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext): void {
@@ -127,8 +134,9 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
       installDependencies();
       provider.refresh();
     }),
-    vscode.commands.registerCommand('playwrightTraceViewer.runAllTestsFromExplorer', () => runTests(provider)),
+    vscode.commands.registerCommand('playwrightTraceViewer.runAllTestsFromExplorer', (options?: RunTestsOptions) => runTests(provider, undefined, options)),
     vscode.commands.registerCommand('playwrightTraceViewer.runTestNode', (node?: TestNode) => runTests(provider, node)),
+    vscode.commands.registerCommand('playwrightTraceViewer.runTests', (options?: RunTestsOptions) => runTests(provider, undefined, options)),
     vscode.commands.registerCommand('playwrightTraceViewer.openTestFile', (node?: FileNode) => openTestFile(node)),
     vscode.commands.registerCommand('playwrightTraceViewer.openResultFile', (node?: ResultFileNode) => openResultFile(node)),
     vscode.commands.registerCommand('playwrightTraceViewer.copyTestPath', (node?: TestNode) => copyTestPath(node))
@@ -142,6 +150,7 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
   private results: ResultFileNode[] | undefined;
   private discovery: PlaywrightDiscoveryResult | undefined;
   private searchFilter = '';
+  private runningTargetKeys = new Set<string>();
 
   refresh(): void {
     this.nodes = undefined;
@@ -179,6 +188,30 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     this.searchFilter = value.trim().toLowerCase();
     this.nodes = undefined;
     this.onDidChangeTreeDataEmitter.fire(undefined);
+  }
+
+  async setSearchFilter(filter: string): Promise<void> {
+    const normalizedFilter = filter.trim().toLowerCase();
+
+    if (this.searchFilter === normalizedFilter) {
+      return;
+    }
+
+    this.searchFilter = normalizedFilter;
+    this.nodes = undefined;
+    this.onDidChangeTreeDataEmitter.fire(undefined);
+  }
+
+  hasSearchFilter(): boolean {
+    return this.searchFilter.length > 0;
+  }
+
+  async getVisibleNodes(): Promise<TestNode[]> {
+    if (!this.nodes) {
+      this.nodes = await this.discoverNodes();
+    }
+
+    return this.nodes;
   }
 
   async selectViewMode(): Promise<void> {
@@ -244,7 +277,9 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     if (element.type === 'suite') {
       const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
       item.contextValue = 'playwrightTestSuite';
-      item.iconPath = new vscode.ThemeIcon('symbol-namespace');
+      item.iconPath = this.isNodeRunning(element)
+        ? new vscode.ThemeIcon('loading~spin')
+        : new vscode.ThemeIcon('symbol-namespace');
       item.tooltip = element.titlePath.join(' › ');
       return item;
     }
@@ -256,7 +291,9 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
       );
       item.description = `${path.basename(element.relativePath)}:${element.line}`;
       item.contextValue = 'playwrightTestCase';
-      item.iconPath = new vscode.ThemeIcon('beaker');
+      item.iconPath = this.isNodeRunning(element)
+        ? new vscode.ThemeIcon('loading~spin')
+        : new vscode.ThemeIcon('beaker');
       item.resourceUri = element.uri;
       item.tooltip = [
         element.titlePath.join(' › '),
@@ -275,7 +312,9 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
       const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
       item.description = `${element.files.length}`;
       item.contextValue = element.resultOnly ? 'playwrightResultFolder' : 'playwrightTestFolder';
-      item.iconPath = new vscode.ThemeIcon('folder');
+      item.iconPath = this.isNodeRunning(element)
+        ? new vscode.ThemeIcon('loading~spin')
+        : new vscode.ThemeIcon('folder');
       item.tooltip = element.relativePath;
       return item;
     }
@@ -301,7 +340,9 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
     );
     item.description = path.dirname(element.relativePath);
     item.contextValue = 'playwrightTestFile';
-    item.iconPath = new vscode.ThemeIcon(element.framework === 'vitest' ? 'testing-view-icon' : 'beaker');
+    item.iconPath = this.isNodeRunning(element)
+      ? new vscode.ThemeIcon('loading~spin')
+      : new vscode.ThemeIcon(element.framework === 'vitest' ? 'testing-view-icon' : 'beaker');
     item.resourceUri = element.uri;
     item.tooltip = `${element.framework}: ${element.relativePath}`;
     item.command = {
@@ -310,6 +351,32 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
       arguments: [element]
     };
     return item;
+  }
+
+  setRunningTarget(target: TestFileTarget, running: boolean): void {
+    const key = getTestTargetKey(target);
+    if (running) {
+      this.runningTargetKeys.add(key);
+    } else {
+      this.runningTargetKeys.delete(key);
+    }
+    this.onDidChangeTreeDataEmitter.fire(undefined);
+  }
+
+  private isNodeRunning(node: TestNode): boolean {
+    if (node.type === 'file' || node.type === 'test') {
+      return this.runningTargetKeys.has(getTestTargetKey(node));
+    }
+
+    if (node.type === 'folder') {
+      return node.files.some((child) => this.isNodeRunning(child));
+    }
+
+    if (node.type === 'suite') {
+      return node.children.some((child) => this.isNodeRunning(child));
+    }
+
+    return false;
   }
 
   private async discoverNodes(): Promise<TestNode[]> {
@@ -1322,7 +1389,11 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function runTests(provider: PlaywrightTestProvider, node?: TestNode): Promise<void> {
+async function runTests(
+  provider: PlaywrightTestProvider,
+  node?: TestNode,
+  options: RunTestsOptions = {}
+): Promise<void> {
   if (node && node.type !== 'file' && node.type !== 'folder' && node.type !== 'test' && node.type !== 'suite') {
     return;
   }
@@ -1334,29 +1405,36 @@ async function runTests(provider: PlaywrightTestProvider, node?: TestNode): Prom
     return;
   }
 
+  if (typeof options.filter === 'string') {
+    await provider.setSearchFilter(options.filter);
+  }
+
   if (node?.type === 'file' || node?.type === 'test') {
     const group = await getTestRunGroup(workspaceRoot, node);
-    await runTestFramework(group.cwd, group.framework, group.testPaths, provider);
+    await runGroupedTests([group], provider, options);
     return;
   }
 
   if (node?.type === 'folder' || node?.type === 'suite') {
-    const targets = node.type === 'folder' ? node.files : flattenSuiteTests(node);
-    const groups = await groupTestFilesByProject(workspaceRoot, targets);
-    await runGroupedTests(groups, provider);
+    const targets = getRunnableTargets([node]);
+    const groups = await getTestRunGroups(workspaceRoot, targets);
+    await runGroupedTests(groups, provider, options);
     return;
   }
 
-  const files = await vscode.workspace.findFiles(getTestGlob(), getExcludeGlob());
-  const testFiles = await filterTestFiles(files);
-  const groups = await groupTestFilesByProject(workspaceRoot, testFiles);
+  const targets = provider.hasSearchFilter() || getViewMode() === 'test'
+    ? getRunnableTargets(await provider.getVisibleNodes())
+    : await getAllTestFileTargets();
+  const groups = await getTestRunGroups(workspaceRoot, targets);
 
   if (groups.length === 0) {
-    vscode.window.showInformationMessage('No supported Playwright or Vitest test files found.');
+    vscode.window.showInformationMessage(provider.hasSearchFilter()
+      ? 'No tests match the current search filter.'
+      : 'No supported Playwright or Vitest test files found.');
     return;
   }
 
-  await runGroupedTests(groups, provider);
+  await runGroupedTests(groups, provider, options);
 }
 
 function getTerminalRunner(): string {
@@ -1372,29 +1450,22 @@ function getTerminalRunner(): string {
   return packageRunner;
 }
 
-async function groupTestFilesByProject(
+async function getAllTestFileTargets(): Promise<TestFileTarget[]> {
+  const files = await vscode.workspace.findFiles(getTestGlob(), getExcludeGlob());
+  return filterTestFiles(files);
+}
+
+async function getTestRunGroups(
   workspaceRoot: string,
-  files: Array<TestFileTarget | ResultFileNode>
+  files: TestFileTarget[]
 ): Promise<TestRunGroup[]> {
-  const groups = new Map<string, TestRunGroup>();
+  const groups: TestRunGroup[] = [];
 
   for (const file of files) {
-    if (!('framework' in file)) {
-      continue;
-    }
-
-    const group = await getTestRunGroup(workspaceRoot, file);
-    const key = `${group.cwd}\0${group.framework}`;
-    const existing = groups.get(key);
-
-    if (existing) {
-      existing.testPaths.push(...group.testPaths);
-    } else {
-      groups.set(key, group);
-    }
+    groups.push(await getTestRunGroup(workspaceRoot, file));
   }
 
-  return [...groups.values()];
+  return dedupeTestRunGroups(groups);
 }
 
 async function getTestRunGroup(workspaceRoot: string, file: TestFileTarget): Promise<TestRunGroup> {
@@ -1404,17 +1475,113 @@ async function getTestRunGroup(workspaceRoot: string, file: TestFileTarget): Pro
   return {
     cwd,
     framework: file.framework,
-    testPaths: [file.line ? `${relativePath}:${file.line}` : relativePath]
+    testPaths: [file.line ? `${relativePath}:${file.line}` : relativePath],
+    targets: [file]
   };
+}
+
+function getTestTargetKey(target: TestFileTarget): string {
+  return `${target.framework}\0${target.uri.fsPath}\0${target.line ?? ''}`;
 }
 
 function flattenSuiteTests(suite: TestSuiteNode): TestCaseNode[] {
   return suite.children.flatMap((child) => child.type === 'test' ? [child] : flattenSuiteTests(child));
 }
 
-async function runGroupedTests(groups: TestRunGroup[], provider: PlaywrightTestProvider): Promise<void> {
+function getRunnableTargets(nodes: TestNode[]): TestFileTarget[] {
+  const targets: TestFileTarget[] = [];
+
+  for (const node of nodes) {
+    if (node.type === 'file' || node.type === 'test') {
+      targets.push(node);
+    } else if (node.type === 'folder') {
+      targets.push(...getRunnableTargets(node.files));
+    } else if (node.type === 'suite') {
+      targets.push(...flattenSuiteTests(node));
+    }
+  }
+
+  return targets;
+}
+
+function dedupeTestRunGroups(groups: TestRunGroup[]): TestRunGroup[] {
+  const groupsByProject = new Map<string, TestRunGroup>();
+
   for (const group of groups) {
-    await runTestFramework(group.cwd, group.framework, group.testPaths, provider);
+    const key = `${group.cwd}\0${group.framework}`;
+    const existing = groupsByProject.get(key);
+
+    if (existing) {
+      existing.testPaths.push(...group.testPaths);
+      existing.targets.push(...group.targets);
+    } else {
+      groupsByProject.set(key, {
+        cwd: group.cwd,
+        framework: group.framework,
+        testPaths: [...group.testPaths],
+        targets: [...group.targets]
+      });
+    }
+  }
+
+  for (const group of groupsByProject.values()) {
+    const pathSeen = new Set<string>();
+    const targetSeen = new Set<string>();
+    group.testPaths = group.testPaths.filter((testPath) => {
+      if (pathSeen.has(testPath)) {
+        return false;
+      }
+
+      pathSeen.add(testPath);
+      return true;
+    });
+    group.targets = group.targets.filter((target) => {
+      const key = getTestTargetKey(target);
+      if (targetSeen.has(key)) {
+        return false;
+      }
+
+      targetSeen.add(key);
+      return true;
+    });
+  }
+
+  return [...groupsByProject.values()];
+}
+
+async function runGroupedTests(
+  groups: TestRunGroup[],
+  provider: PlaywrightTestProvider,
+  options: RunTestsOptions
+): Promise<void> {
+  let failedCount = 0;
+  const continueOnFailure = options.continueOnFailure !== false;
+
+  for (const group of groups) {
+    group.targets.forEach((target) => provider.setRunningTarget(target, true));
+    let succeeded = false;
+
+    try {
+      succeeded = await runTestFramework(group.cwd, group.framework, group.testPaths, provider, {
+        ...options,
+        openTrace: options.openTrace ?? groups.length === 1
+      });
+    } finally {
+      group.targets.forEach((target) => provider.setRunningTarget(target, false));
+    }
+
+    if (succeeded) {
+      continue;
+    }
+
+    failedCount += 1;
+    if (!continueOnFailure) {
+      break;
+    }
+  }
+
+  if (failedCount > 0 && continueOnFailure && groups.length > 1) {
+    vscode.window.showWarningMessage(`${failedCount} test run(s) failed. Remaining runs were still attempted.`);
   }
 }
 
@@ -1422,21 +1589,25 @@ async function runTestFramework(
   cwd: string,
   framework: TestFramework,
   testPaths: string[] = [],
-  provider?: PlaywrightTestProvider
-): Promise<void> {
+  provider?: PlaywrightTestProvider,
+  options: RunTestsOptions = {}
+): Promise<boolean> {
   if (framework === 'playwright') {
     try {
-      const tracePath = await runTestsWithTrace(cwd, 'on', testPaths);
+      const result = await runTestsWithTraceDetailed(cwd, 'on', testPaths);
       provider?.refreshResults();
-      if (tracePath) {
-        await vscode.commands.executeCommand('playwrightTraceViewer.openSelectedTrace', vscode.Uri.file(tracePath));
-      } else {
+      if (result.tracePath && options.openTrace !== false) {
+        await vscode.commands.executeCommand('playwrightTraceViewer.openSelectedTrace', vscode.Uri.file(result.tracePath));
+      } else if (!result.tracePath) {
         vscode.window.showInformationMessage('Playwright finished, but no trace.zip was generated.');
       }
+      return result.exitCode === 0;
+    } catch (error) {
+      vscode.window.showWarningMessage(`Playwright run failed: ${String(error)}`);
+      return false;
     } finally {
       provider?.refreshResults();
     }
-    return;
   }
 
   const runner = getTerminalRunner();
@@ -1446,6 +1617,7 @@ async function runTestFramework(
     : [runner, 'vitest', 'run', ...testPaths];
 
   runInTerminal(cwd, args);
+  return true;
 }
 
 async function findLocalFrameworkBin(cwd: string, framework: TestFramework): Promise<string | undefined> {
