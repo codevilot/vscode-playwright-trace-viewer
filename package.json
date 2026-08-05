@@ -2,7 +2,7 @@
   "name": "playwright-trace-viewer",
   "displayName": "Playwright Trace Viewer",
   "description": "A lightweight helper for opening Playwright trace.zip files from VS Code.",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "publisher": "codevilot",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -179,6 +179,11 @@
           "default": "test",
           "scope": "resource",
           "description": "Controls whether the Tests sidebar is shown by Playwright test title or by file path."
+        },
+        "playwrightTraceViewer.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Directory used to run Playwright commands. Leave empty to auto-detect the nearest package.json or Playwright config from the active or selected test file."
         },
         "playwrightTraceViewer.packageRunner": {
           "type": "string",

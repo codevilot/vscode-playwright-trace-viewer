@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot, isTraceFilePath } from './trace';
 import { outputChannelName, resolvePlaywrightCommand, runInTerminal, runTestsWithTrace } from './terminal';
+import { findNearestWorkingDirectory, getWorkingDirectory } from './workspace/workingDirectory';
 
 type TestNode = FolderNode | FileNode | ResultFileNode | TestSuiteNode | TestCaseNode;
 
@@ -99,6 +100,7 @@ export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext)
       || event.affectsConfiguration('playwrightTraceViewer.testGlob')
       || event.affectsConfiguration('playwrightTraceViewer.testExcludeGlobs')
       || event.affectsConfiguration('playwrightTraceViewer.testExplorerViewMode')
+      || event.affectsConfiguration('playwrightTraceViewer.workingDirectory')
     ) {
       recreateResultWatcher();
       provider.refresh();
@@ -358,9 +360,10 @@ async function discoverPlaywrightTests(): Promise<PlaywrightDiscoveryResult> {
     return { tests: [] };
   }
 
+  const workingDirectory = getWorkingDirectory() ?? workspaceRoot;
   const output = vscode.window.createOutputChannel(outputChannelName);
   const playwrightArgs = ['test', '--list', '--reporter=json'];
-  const command = await resolvePlaywrightCommand(workspaceRoot, playwrightArgs);
+  const command = await resolvePlaywrightCommand(workingDirectory, playwrightArgs);
 
   output.appendLine(`$ ${command.runner} ${command.args.map(quoteShellArg).join(' ')}`);
 
@@ -368,7 +371,7 @@ async function discoverPlaywrightTests(): Promise<PlaywrightDiscoveryResult> {
     location: vscode.ProgressLocation.Notification,
     title: 'Discovering Playwright tests',
     cancellable: false
-  }, () => runDiscoveryProcess(workspaceRoot, command.runner, command.args, output));
+  }, () => runDiscoveryProcess(workingDirectory, command.runner, command.args, output));
 
   if (result.exitCode !== 0) {
     output.show(true);
@@ -383,7 +386,7 @@ async function discoverPlaywrightTests(): Promise<PlaywrightDiscoveryResult> {
   }
 
   try {
-    return { tests: parsePlaywrightJsonReport(JSON.parse(jsonText), workspaceRoot) };
+    return { tests: parsePlaywrightJsonReport(JSON.parse(jsonText), workspaceRoot, workingDirectory) };
   } catch (error) {
     output.show(true);
     output.appendLine(`Failed to parse Playwright JSON reporter output: ${String(error)}`);
@@ -416,7 +419,7 @@ function runDiscoveryProcess(
   });
 }
 
-function parsePlaywrightJsonReport(report: unknown, workspaceRoot: string): TestCaseNode[] {
+function parsePlaywrightJsonReport(report: unknown, workspaceRoot: string, discoveryRoot: string): TestCaseNode[] {
   if (!isJsonObject(report)) {
     return [];
   }
@@ -424,13 +427,14 @@ function parsePlaywrightJsonReport(report: unknown, workspaceRoot: string): Test
   const context = getDiscoveryContext(report.config);
   const suites = Array.isArray(report.suites) ? report.suites : [];
 
-  return suites.flatMap((suite) => collectSuiteTests(suite, [], workspaceRoot, context));
+  return suites.flatMap((suite) => collectSuiteTests(suite, [], workspaceRoot, discoveryRoot, context));
 }
 
 function collectSuiteTests(
   suite: unknown,
   parentTitles: string[],
   workspaceRoot: string,
+  discoveryRoot: string,
   context: PlaywrightDiscoveryContext
 ): TestCaseNode[] {
   if (!isJsonObject(suite)) {
@@ -443,13 +447,13 @@ function collectSuiteTests(
 
   if (Array.isArray(suite.specs)) {
     for (const spec of suite.specs) {
-      children.push(...collectSpecTests(spec, suiteTitles, workspaceRoot, context));
+      children.push(...collectSpecTests(spec, suiteTitles, workspaceRoot, discoveryRoot, context));
     }
   }
 
   if (Array.isArray(suite.suites)) {
     for (const childSuite of suite.suites) {
-      children.push(...collectSuiteTests(childSuite, suiteTitles, workspaceRoot, context));
+      children.push(...collectSuiteTests(childSuite, suiteTitles, workspaceRoot, discoveryRoot, context));
     }
   }
 
@@ -466,6 +470,7 @@ function collectSpecTests(
   spec: unknown,
   parentTitles: string[],
   workspaceRoot: string,
+  discoveryRoot: string,
   context: PlaywrightDiscoveryContext
 ): TestCaseNode[] {
   if (!isJsonObject(spec)) {
@@ -481,7 +486,7 @@ function collectSpecTests(
     return [];
   }
 
-  const absolutePath = resolveDiscoveredFilePath(file, workspaceRoot, context.testDirs);
+  const absolutePath = resolveDiscoveredFilePath(file, discoveryRoot, context.testDirs);
   const relativePath = normalizeRelativePath(path.relative(workspaceRoot, absolutePath));
   const uri = vscode.Uri.file(absolutePath);
   const tests = Array.isArray(spec.tests) && spec.tests.length > 0 ? spec.tests : [undefined];
@@ -1260,20 +1265,20 @@ function getResultFileIcon(relativePath: string): vscode.ThemeIcon {
 }
 
 async function installDependencies(): Promise<void> {
-  const workspaceRoot = getWorkspaceRoot();
+  const workingDirectory = getWorkingDirectory();
 
-  if (!workspaceRoot) {
+  if (!workingDirectory) {
     vscode.window.showErrorMessage('Open a workspace folder before installing dependencies.');
     return;
   }
 
-  if (!(await pathExists(path.join(workspaceRoot, 'package.json')))) {
-    vscode.window.showErrorMessage('No package.json found in the current workspace.');
+  if (!(await pathExists(path.join(workingDirectory, 'package.json')))) {
+    vscode.window.showErrorMessage('No package.json found in the Playwright working directory.');
     return;
   }
 
-  const packageManager = await detectPackageManager(workspaceRoot);
-  runInTerminal(workspaceRoot, [packageManager, 'install']);
+  const packageManager = await detectPackageManager(workingDirectory);
+  runInTerminal(workingDirectory, [packageManager, 'install']);
 }
 
 async function detectPackageManager(workspaceRoot: string): Promise<string> {
@@ -1373,7 +1378,7 @@ async function groupTestFilesByProject(
 }
 
 async function getTestRunGroup(workspaceRoot: string, file: TestFileTarget): Promise<TestRunGroup> {
-  const cwd = await findNearestPackageRoot(path.dirname(file.uri.fsPath), workspaceRoot);
+  const cwd = findNearestWorkingDirectory(path.dirname(file.uri.fsPath), workspaceRoot);
   const relativePath = normalizeRelativePath(path.relative(cwd, file.uri.fsPath));
 
   return {
@@ -1385,25 +1390,6 @@ async function getTestRunGroup(workspaceRoot: string, file: TestFileTarget): Pro
 
 function flattenSuiteTests(suite: TestSuiteNode): TestCaseNode[] {
   return suite.children.flatMap((child) => child.type === 'test' ? [child] : flattenSuiteTests(child));
-}
-
-async function findNearestPackageRoot(startDir: string, workspaceRoot: string): Promise<string> {
-  let current = startDir;
-
-  while (current.startsWith(workspaceRoot)) {
-    if (await pathExists(path.join(current, 'package.json'))) {
-      return current;
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
-
-    current = parent;
-  }
-
-  return workspaceRoot;
 }
 
 async function runGroupedTests(groups: TestRunGroup[], provider: PlaywrightTestProvider): Promise<void> {

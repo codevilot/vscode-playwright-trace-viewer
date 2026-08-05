@@ -4,6 +4,7 @@ import { registerPlaywrightTestExplorer } from './testExplorer';
 import { findLatestTrace, getWorkspaceRoot, validateTraceUri } from './trace';
 import { runTestsWithTrace } from './terminal';
 import { openTraceViewer, registerTraceViewer } from './viewer';
+import { getWorkingDirectory } from './workspace/workingDirectory';
 
 export function activate(context: vscode.ExtensionContext): void {
   registerTraceViewer(context);
@@ -93,25 +94,25 @@ async function openSelectedTrace(uri: vscode.Uri | undefined): Promise<void> {
 }
 
 function openReport(): void {
-  const workspaceRoot = getWorkspaceRoot();
+  const workingDirectory = getWorkingDirectory();
 
-  if (!workspaceRoot) {
+  if (!workingDirectory) {
     vscode.window.showErrorMessage('Open a workspace folder before opening a Playwright report.');
     return;
   }
 
-  showReport(workspaceRoot);
+  showReport(workingDirectory);
 }
 
 async function runTests(traceMode: 'on' | 'retain-on-failure'): Promise<void> {
-  const workspaceRoot = getWorkspaceRoot();
+  const workingDirectory = getWorkingDirectory();
 
-  if (!workspaceRoot) {
+  if (!workingDirectory) {
     vscode.window.showErrorMessage('Open a workspace folder before running Playwright tests.');
     return;
   }
 
-  const tracePath = await runTestsWithTrace(workspaceRoot, traceMode);
+  const tracePath = await runTestsWithTrace(workingDirectory, traceMode);
   if (tracePath) {
     await openTraceViewer(tracePath);
   } else {

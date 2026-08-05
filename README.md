@@ -69,6 +69,10 @@ Default: `test`
 
 Allowed values: `test`, `file`
 
+`playwrightTraceViewer.workingDirectory`
+
+Default: empty, auto-detects the nearest `package.json` or Playwright config from the active or selected test file.
+
 ## Usage
 
 1. Install dependencies with `npm install`.
