@@ -94,6 +94,12 @@ type WebviewTestNode = {
   children: WebviewTestNode[];
 };
 
+type WebviewState = {
+  viewMode: TestExplorerViewMode;
+  searchFilter: string;
+  nodes: WebviewTestNode[];
+};
+
 export function registerPlaywrightTestExplorer(context: vscode.ExtensionContext): void {
   const provider = new PlaywrightTestProvider();
   const webviewProvider = new PlaywrightTestWebviewProvider(context.extensionUri, provider);
@@ -163,8 +169,10 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
   private discovery: PlaywrightDiscoveryResult | undefined;
   private searchFilter = '';
   private runningTargetKeys = new Set<string>();
+  private nodeCacheVersion = 0;
 
   refresh(): void {
+    this.nodeCacheVersion += 1;
     this.nodes = undefined;
     this.results = undefined;
     this.discovery = undefined;
@@ -172,6 +180,7 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
   }
 
   refreshResults(): void {
+    this.nodeCacheVersion += 1;
     this.nodes = undefined;
     this.results = undefined;
     this.onDidChangeTreeDataEmitter.fire(undefined);
@@ -197,21 +206,23 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
       return;
     }
 
-    this.searchFilter = value.trim().toLowerCase();
-    this.nodes = undefined;
-    this.onDidChangeTreeDataEmitter.fire(undefined);
+    await this.setSearchFilter(value);
   }
 
-  async setSearchFilter(filter: string): Promise<void> {
+  async setSearchFilter(filter: string, notify = true): Promise<boolean> {
     const normalizedFilter = filter.trim().toLowerCase();
 
     if (this.searchFilter === normalizedFilter) {
-      return;
+      return false;
     }
 
     this.searchFilter = normalizedFilter;
+    this.nodeCacheVersion += 1;
     this.nodes = undefined;
-    this.onDidChangeTreeDataEmitter.fire(undefined);
+    if (notify) {
+      this.onDidChangeTreeDataEmitter.fire(undefined);
+    }
+    return true;
   }
 
   hasSearchFilter(): boolean {
@@ -224,7 +235,12 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
 
   async getVisibleNodes(): Promise<TestNode[]> {
     if (!this.nodes) {
-      this.nodes = await this.discoverNodes();
+      const cacheVersion = this.nodeCacheVersion;
+      const nodes = await this.discoverNodes();
+      if (this.nodeCacheVersion === cacheVersion) {
+        this.nodes = nodes;
+      }
+      return nodes;
     }
 
     return this.nodes;
@@ -430,6 +446,8 @@ class PlaywrightTestProvider implements vscode.TreeDataProvider<TestNode> {
 
 class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
+  private didSetHtml = false;
+  private stateUpdateVersion = 0;
   private nodesById = new Map<string, TestNode>();
 
   constructor(
@@ -448,6 +466,7 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage((message: { command?: string; id?: string; value?: string }) => {
       void this.handleMessage(message);
     });
+    this.didSetHtml = false;
     void this.refresh();
   }
 
@@ -458,7 +477,10 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     if (message.command === 'search') {
-      await this.provider.setSearchFilter(message.value ?? '');
+      const changed = await this.provider.setSearchFilter(message.value ?? '', false);
+      if (changed) {
+        await this.updateState();
+      }
       return;
     }
 
@@ -487,14 +509,44 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const updateVersion = ++this.stateUpdateVersion;
+    const state = await this.getState();
+    if (updateVersion !== this.stateUpdateVersion) {
+      return;
+    }
+
+    if (!this.didSetHtml) {
+      this.view.webview.html = this.getHtml(this.view.webview, state);
+      this.didSetHtml = true;
+      return;
+    }
+
+    await this.view.webview.postMessage({ command: 'state', state });
+  }
+
+  private async updateState(): Promise<void> {
+    if (!this.view || !this.didSetHtml) {
+      await this.refresh();
+      return;
+    }
+
+    const updateVersion = ++this.stateUpdateVersion;
+    const state = await this.getState();
+    if (updateVersion !== this.stateUpdateVersion) {
+      return;
+    }
+
+    await this.view.webview.postMessage({ command: 'state', state });
+  }
+
+  private async getState(): Promise<WebviewState> {
     const nodes = await this.provider.getVisibleNodes();
     this.nodesById = new Map<string, TestNode>();
-    const state = {
+    return {
       viewMode: getViewMode(),
       searchFilter: this.provider.getSearchFilter(),
       nodes: this.toWebviewNodes(nodes, [])
     };
-    this.view.webview.html = this.getHtml(this.view.webview, state);
   }
 
   private toWebviewNodes(nodes: TestNode[], pathParts: number[]): WebviewTestNode[] {
@@ -575,7 +627,7 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
     return 'test';
   }
 
-  private getHtml(webview: vscode.Webview, state: { viewMode: TestExplorerViewMode; searchFilter: string; nodes: WebviewTestNode[] }): string {
+  private getHtml(webview: vscode.Webview, state: WebviewState): string {
     const nonce = getNonce();
     const serializedState = JSON.stringify(state).replace(/</g, '\\u003c');
 
@@ -654,6 +706,7 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
       box-sizing: border-box;
     }
     .row:hover { background: var(--vscode-list-hoverBackground); }
+    .row.openable { cursor: pointer; }
     .twisty {
       display: inline-block;
       color: var(--vscode-descriptionForeground);
@@ -732,9 +785,10 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
   <main id="tree" class="tree"></main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const state = ${serializedState};
+    let state = ${serializedState};
     const tree = document.getElementById('tree');
     const search = document.getElementById('search');
+    const viewMode = document.getElementById('viewMode');
     search.value = state.searchFilter;
     const renderText = value => String(value ?? '');
     const icons = {
@@ -773,12 +827,32 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
 
       const rowParent = hasChildren ? document.createElement('summary') : wrapper;
       const row = document.createElement('div');
-      row.className = 'row ' + node.type + (node.running ? ' running' : '');
+      row.className = 'row ' + node.type + (node.running ? ' running' : '') + (node.canOpen ? ' openable' : '');
       row.title = [node.label, node.meta].filter(Boolean).join('\\n');
+      if (node.canOpen) {
+        row.tabIndex = 0;
+        row.addEventListener('click', event => {
+          event.preventDefault();
+          post('open', node.id);
+        });
+        row.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            post('open', node.id);
+          }
+        });
+      }
 
       const twisty = document.createElement('span');
       twisty.className = 'twisty';
       twisty.textContent = hasChildren ? '›' : '';
+      if (hasChildren) {
+        twisty.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          wrapper.open = !wrapper.open;
+        });
+      }
       row.appendChild(twisty);
 
       const icon = document.createElement('span');
@@ -805,12 +879,6 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
       if (node.canRun) {
         actions.appendChild(createAction('▶', 'Run', 'run', node.id));
       }
-      if (node.canOpen) {
-        actions.appendChild(createAction('↗', 'Open', 'open', node.id));
-      }
-      if (node.canCopy) {
-        actions.appendChild(createAction('⧉', 'Copy path', 'copy', node.id));
-      }
       row.appendChild(actions);
 
       rowParent.appendChild(row);
@@ -825,21 +893,39 @@ class PlaywrightTestWebviewProvider implements vscode.WebviewViewProvider {
       return wrapper;
     }
 
-    if (state.nodes.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent = 'No tests found.';
-      tree.appendChild(empty);
-    } else {
-      state.nodes.forEach(node => tree.appendChild(renderNode(node)));
+    function renderState(nextState) {
+      state = nextState;
+      search.placeholder = state.viewMode === 'test' ? 'Search tests' : 'Search files';
+      if (document.activeElement !== search) {
+        search.value = state.searchFilter;
+      }
+      viewMode.textContent = state.viewMode === 'test' ? 'Test' : 'File';
+      tree.replaceChildren();
+
+      if (state.nodes.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No tests found.';
+        tree.appendChild(empty);
+      } else {
+        state.nodes.forEach(node => tree.appendChild(renderNode(node)));
+      }
     }
+
+    renderState(state);
+
+    window.addEventListener('message', event => {
+      if (event.data?.command === 'state') {
+        renderState(event.data.state);
+      }
+    });
 
     let searchTimer;
     search.addEventListener('input', () => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => post('search', undefined, search.value), 200);
     });
-    document.getElementById('viewMode').addEventListener('click', () => post('viewMode'));
+    viewMode.addEventListener('click', () => post('viewMode'));
     document.getElementById('refresh').addEventListener('click', () => post('refresh'));
   </script>
 </body>
