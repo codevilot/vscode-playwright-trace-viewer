@@ -635,17 +635,22 @@ function getFolderTitlePath(relativePath: string): string[] {
 
 function attachResultsToTests(tests: TestCaseNode[], resultFiles: ResultFileNode[]): TestCaseNode[] {
   const testRelativePaths = [...new Set(tests.map((test) => test.relativePath))];
+  const testCountByFile = tests.reduce((counts, test) => {
+    counts.set(test.relativePath, (counts.get(test.relativePath) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>());
 
   return tests.map((test) => ({
     ...test,
-    results: getChildResults(matchResultsToTestCase(test, resultFiles, testRelativePaths))
+    results: getChildResults(matchResultsToTestCase(test, resultFiles, testRelativePaths, testCountByFile.get(test.relativePath) === 1))
   }));
 }
 
 function matchResultsToTestCase(
   test: TestCaseNode,
   resultFiles: ResultFileNode[],
-  testRelativePaths: string[]
+  testRelativePaths: string[],
+  isOnlyTestInFile: boolean
 ): ResultFileNode[] {
   const sourceMatches = matchResultsToTestFile(test.relativePath, resultFiles, testRelativePaths);
   const titleSlug = slugify(test.label);
@@ -657,8 +662,23 @@ function matchResultsToTestCase(
 
   return sourceMatches.filter((result) => {
     const resultSlug = canonicalizeResultDirName(path.basename(result.resultDirRelativePath));
-    return resultSlug.includes(titleSlug) || (!!titlePathSlug && resultSlug.includes(titlePathSlug));
+    return isOnlyTestInFile
+      || resultSlug.includes(titleSlug)
+      || (!!titlePathSlug && resultSlug.includes(titlePathSlug))
+      || doesResultSlugPartiallyMatchTitle(resultSlug, titleSlug);
   });
+}
+
+function doesResultSlugPartiallyMatchTitle(resultSlug: string, titleSlug: string): boolean {
+  const titleParts = titleSlug.split('-').filter((part) => part.length >= 3);
+
+  if (titleParts.length === 0) {
+    return false;
+  }
+
+  return titleParts
+    .slice(0, Math.min(titleParts.length, 4))
+    .every((part) => resultSlug.includes(part));
 }
 
 function sortSuitesAndTests<T extends TestSuiteNode | TestCaseNode>(nodes: T[]): T[] {

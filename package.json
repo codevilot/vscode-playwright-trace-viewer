@@ -2,7 +2,7 @@
   "name": "playwright-trace-viewer",
   "displayName": "Playwright Trace Viewer",
   "description": "A lightweight helper for opening Playwright trace.zip files from VS Code.",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "publisher": "codevilot",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -141,7 +141,7 @@
     "viewsWelcome": [
       {
         "view": "playwrightTraceViewer.tests",
-        "contents": "No Playwright or Vitest test files were found in the current workspace.\\n[Search](command:playwrightTraceViewer.searchTests)\\n[Refresh](command:playwrightTraceViewer.refreshTests)"
+        "contents": "No Playwright or Vitest test files were found in the current workspace.\n[Search](command:playwrightTraceViewer.searchTests)\n[Refresh](command:playwrightTraceViewer.refreshTests)"
       }
     ],
     "configuration": {
@@ -261,6 +261,7 @@
     }
   },
   "dependencies": {
-    "playwright-core": "^1.60.0"
+    "playwright-core": "^1.60.0",
+    "yauzl": "^3.4.0"
   }
 }

@@ -21,7 +21,77 @@ npx playwright test --trace on
 - Run Playwright tests with trace retained on failure
 - Browse tests by Playwright `test()` title or by file path
 - Run a single Playwright `test()` from the Tests sidebar by source location
+- Compare scenario before/after states inside trace.zip with Scenario Diff
 - Status bar shortcut for latest trace
+
+## Scenario Diff
+
+Scenario Diff is an optional view inside the embedded trace viewer for tests that attach structured before/after state. Open a `trace.zip`, then use the `Trace / Scenario Diff` toggle where Playwright normally shows the `Action / Before / After` snapshot tabs.
+
+The Scenario Diff view shows cases in the left list and the selected case detail on the right. Use the `All / Visual / JSON / Delta` filter to focus on one kind of evidence at a time. A case can include a visual before/after pair, a JSON field diff, and one or more summary attachments.
+
+Naming rules:
+
+- Use `test.step('before: case name')` and `test.step('after: case name')` to group scenario cases in the trace.
+- Attach JSON named `before-case-key` and `after-case-key` to show changed fields.
+- Attach JSON named `case-key-delta` to show a summary payload.
+- Attach screenshots named `before-case-key` and `after-case-key` with `image/png` content type to show Visual.
+
+Minimal example:
+
+```ts
+import { expect, test } from '@playwright/test';
+
+test('curation KPI scenario', async ({ page }) => {
+  const before = await test.step('before: collector KPI', async () => {
+    const state = { completedCount: 12, silverHours: 4, totalScore: 14400 };
+    await attachJson('before-collector-kpi', state);
+    await page.goto('/admin/control-tower');
+    await attachScreenshot(page, 'before-collector-kpi');
+    return state;
+  });
+
+  await test.step('when: curator approves as good', async () => {
+    await page.getByRole('button', { name: 'Good' }).click();
+  });
+
+  const after = await test.step('after: collector KPI', async () => {
+    const state = { completedCount: 13, silverHours: 5, totalScore: 18000 };
+    await attachJson('after-collector-kpi', state);
+    await page.goto('/admin/control-tower');
+    await attachScreenshot(page, 'after-collector-kpi');
+    return state;
+  });
+
+  await attachJson('collector-kpi-delta', {
+    completedCount: after.completedCount - before.completedCount,
+    silverHours: after.silverHours - before.silverHours,
+    totalScore: after.totalScore - before.totalScore
+  });
+
+  expect(after.silverHours).toBe(before.silverHours + 1);
+});
+
+async function attachJson(name: string, data: unknown) {
+  await test.info().attach(name, {
+    body: JSON.stringify(data, null, 2),
+    contentType: 'application/json'
+  });
+}
+
+async function attachScreenshot(page: import('@playwright/test').Page, name: string) {
+  await test.info().attach(name, {
+    body: await page.screenshot(),
+    contentType: 'image/png'
+  });
+}
+```
+
+Run with trace enabled so the test, attachments, and normal Playwright trace can be opened together:
+
+```bash
+npx playwright test --trace on
+```
 
 ## Tests Sidebar
 

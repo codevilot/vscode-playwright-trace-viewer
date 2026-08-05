@@ -8,7 +8,7 @@
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
         "--folder-uri",
-        "file://${workspaceFolder}"
+        "file://${workspaceFolder}/../playright-example"
       ],
       "outFiles": [
         "${workspaceFolder}/dist/**/*.js"
