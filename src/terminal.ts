@@ -3,7 +3,6 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
-  clearOutputDir,
   copyLatestTrace,
   findLatestTrace,
   getLatestTraceFileName,
@@ -73,7 +72,6 @@ async function runPlaywrightInExtension(
 
   output.show(true);
   output.appendLine(`$ ${command.runner} ${command.args.map(quoteShellArg).join(' ')}`);
-  await clearOutputDir(path.resolve(cwd, outputDir));
 
   const exitCode = await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,

@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getWorkspaceRoot, isTraceFilePath } from './trace';
 import { outputChannelName, resolvePlaywrightCommand, runInTerminal, runTestsWithTraceDetailed } from './terminal';
+import { matchLocationsToTestRange, readCachedTraceSourceLocations, TraceSourceLocation } from './playwright/traceMapping';
 import { findNearestWorkingDirectory, getWorkingDirectory } from './workspace/workingDirectory';
 
 type TestNode = FolderNode | FileNode | ResultFileNode | TestSuiteNode | TestCaseNode;
@@ -34,6 +35,7 @@ type ResultFileNode = {
   relativePath: string;
   resultDirRelativePath: string;
   sourceFileSlugs: string[];
+  traceSourceLocations?: TraceSourceLocation[];
   uri: vscode.Uri;
   mtimeMs: number;
 };
@@ -709,16 +711,30 @@ function attachResultsToTests(tests: TestCaseNode[], resultFiles: ResultFileNode
 
   return tests.map((test) => ({
     ...test,
-    results: getChildResults(matchResultsToTestCase(test, resultFiles, testRelativePaths, testCountByFile.get(test.relativePath) === 1))
+    results: getChildResults(matchResultsToTestCase(test, tests, resultFiles, testRelativePaths, testCountByFile.get(test.relativePath) === 1))
   }));
 }
 
 function matchResultsToTestCase(
   test: TestCaseNode,
+  tests: TestCaseNode[],
   resultFiles: ResultFileNode[],
   testRelativePaths: string[],
   isOnlyTestInFile: boolean
 ): ResultFileNode[] {
+  const range = {
+    relativePath: test.relativePath,
+    line: test.line,
+    nextLine: getNextTestLine(test, tests)
+  };
+  const locationMatches = resultFiles.filter((result) => {
+    return matchLocationsToTestRange(result.traceSourceLocations, range) === true;
+  });
+
+  if (locationMatches.length > 0) {
+    return locationMatches;
+  }
+
   const sourceMatches = matchResultsToTestFile(test.relativePath, resultFiles, testRelativePaths);
   const titleSlug = slugify(test.label);
   const titlePathSlug = slugify(test.titlePath.join('-'));
@@ -734,6 +750,12 @@ function matchResultsToTestCase(
       || (!!titlePathSlug && resultSlug.includes(titlePathSlug))
       || doesResultSlugPartiallyMatchTitle(resultSlug, titleSlug);
   });
+}
+
+function getNextTestLine(test: TestCaseNode, tests: TestCaseNode[]): number | undefined {
+  return tests
+    .filter((candidate) => candidate.relativePath === test.relativePath && candidate.line > test.line)
+    .sort((a, b) => a.line - b.line)[0]?.line;
 }
 
 function doesResultSlugPartiallyMatchTitle(resultSlug: string, titleSlug: string): boolean {
@@ -946,8 +968,9 @@ async function discoverResults(): Promise<ResultFileNode[]> {
   }
 
   const files = await vscode.workspace.findFiles(getResultGlob());
+  const traceLocationsByResultDir = new Map<string, Promise<TraceSourceLocation[] | undefined>>();
   const resultFiles = await Promise.all(
-    files.map(async (uri) => {
+    files.map(async (uri): Promise<ResultFileNode | undefined> => {
       try {
         const stat = await fs.stat(uri.fsPath);
 
@@ -959,12 +982,22 @@ async function discoverResults(): Promise<ResultFileNode[]> {
 
         const resultDirRelativePath = getResultDirRelativePath(relativePath);
         const resultDirPath = path.join(workspaceRoot, resultDirRelativePath);
+        let traceLocationsPromise = traceLocationsByResultDir.get(resultDirPath);
+        if (!traceLocationsPromise) {
+          const tracePath = isTraceFilePath(relativePath)
+            ? uri.fsPath
+            : path.join(resultDirPath, 'trace.zip');
+          traceLocationsPromise = readCachedTraceSourceLocations(tracePath, workspaceRoot);
+          traceLocationsByResultDir.set(resultDirPath, traceLocationsPromise);
+        }
+
         return {
           type: 'resultFile' as const,
           label: path.basename(relativePath),
           relativePath,
           resultDirRelativePath,
           sourceFileSlugs: await getResultSourceFileSlugs(resultDirPath),
+          traceSourceLocations: await traceLocationsPromise,
           uri,
           mtimeMs: stat.mtimeMs
         };
@@ -1043,6 +1076,10 @@ function matchResultsToTestFile(
     .length > 1;
 
   return resultFiles.filter((file) => {
+    if (file.traceSourceLocations?.some((location) => location.relativePath === normalizeRelativePath(relativePath))) {
+      return true;
+    }
+
     if (!isSourceSlugAmbiguous && file.sourceFileSlugs.some((slug) => slug === sourceSlug || slug.startsWith(`${sourceSlug}-`))) {
       return true;
     }

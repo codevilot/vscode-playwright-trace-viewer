@@ -1,13 +1,16 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { isTraceFilePath } from '../trace';
 
-const maxOutputDirNameLength = 80;
+const maxOutputDirPrefixLength = 48;
 
 export function getPlaywrightOutputDir(testPaths: string[]): string {
   const input = testPaths.length > 0 ? testPaths.join('-') : 'all';
   const slug = shortenSlug(slugify(input) || 'all', input);
-  return path.join('test-results', slug);
+  const hash = hashString(input);
+  const runId = `${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${process.pid.toString(36)}-${randomBytes(3).toString('hex')}`;
+  return path.join('test-results', `${slug}-${hash}-${runId}`);
 }
 
 export async function clearOutputDir(outputDir: string): Promise<void> {
@@ -69,12 +72,12 @@ function slugify(value: string): string {
 }
 
 function shortenSlug(slug: string, input: string): string {
-  if (slug.length <= maxOutputDirNameLength) {
+  if (slug.length <= maxOutputDirPrefixLength) {
     return slug;
   }
 
   const hash = hashString(input);
-  return `${slug.slice(0, maxOutputDirNameLength - hash.length - 1).replace(/-+$/g, '')}-${hash}`;
+  return slug.slice(0, maxOutputDirPrefixLength - hash.length - 1).replace(/-+$/g, '') || hash;
 }
 
 function hashString(value: string): string {

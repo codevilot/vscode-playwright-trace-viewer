@@ -4,6 +4,7 @@ src/**
 example/**
 playwright-example/**
 test-results/**
+test/**
 *.vsix
 tsconfig.json
 **/*.map
