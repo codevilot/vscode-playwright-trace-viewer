@@ -2,8 +2,11 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { isTraceFilePath } from '../trace';
 
+const maxOutputDirNameLength = 80;
+
 export function getPlaywrightOutputDir(testPaths: string[]): string {
-  const slug = slugify(testPaths.length > 0 ? testPaths.join('-') : 'all') || 'all';
+  const input = testPaths.length > 0 ? testPaths.join('-') : 'all';
+  const slug = shortenSlug(slugify(input) || 'all', input);
   return path.join('test-results', slug);
 }
 
@@ -63,4 +66,23 @@ function slugify(value: string): string {
     .replace(/\.[^.]+$/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function shortenSlug(slug: string, input: string): string {
+  if (slug.length <= maxOutputDirNameLength) {
+    return slug;
+  }
+
+  const hash = hashString(input);
+  return `${slug.slice(0, maxOutputDirNameLength - hash.length - 1).replace(/-+$/g, '')}-${hash}`;
+}
+
+function hashString(value: string): string {
+  let hash = 5381;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
+  }
+
+  return (hash >>> 0).toString(36);
 }
